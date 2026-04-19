@@ -9,7 +9,7 @@ set -euo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
 VERSION="1.0.0"
-GITHUB_RAW_URL="https://raw.githubusercontent.com/ВАШ_НИК/mtproxy-setup/main/mtproxy-setup.sh"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
 # ── Цвета и символы ─────────────────────────────────────────
