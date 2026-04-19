@@ -5,12 +5,27 @@
 #  v1.0 — интерактивная установка
 # ============================================================
 
-set -euo pipefail
+set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
 VERSION="1.0.0"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
+
+# ── Определяем способ запуска ────────────────────────────────
+# При запуске через bash <(curl ...) $0 содержит путь к пайпу
+# вида /proc/PID/fd/N — это не реальный файл, cp его не осилит
+SCRIPT_IS_PIPE=false
+SCRIPT_SOURCE_PATH=""
+case "$0" in
+    /proc/*/fd/*|/dev/fd/*|pipe:*)
+        SCRIPT_IS_PIPE=true
+        ;;
+    *)
+        SCRIPT_SOURCE_PATH="$(realpath "$0" 2>/dev/null || true)"
+        [[ -f "$SCRIPT_SOURCE_PATH" ]] || SCRIPT_IS_PIPE=true
+        ;;
+esac
 
 # ── Цвета и символы ─────────────────────────────────────────
 RED='\033[0;31m'
@@ -732,17 +747,28 @@ check_status() {
 
 # ── Самоустановка ────────────────────────────────────────────
 self_install() {
-    local script_path
-    script_path="$(realpath "$0")"
-
-    # Уже установлен и это тот же файл — ничего не делаем
-    if [[ "$script_path" == "$INSTALL_PATH" ]]; then
+    # Уже запущен из нужного места — ничего не делаем
+    if [[ "$SCRIPT_SOURCE_PATH" == "$INSTALL_PATH" ]]; then
         return
     fi
 
-    cp "$script_path" "$INSTALL_PATH"
-    chmod +x "$INSTALL_PATH"
-    ok "Скрипт установлен — теперь запускай просто: ${BOLD}amtcas${RESET}"
+    if [[ "$SCRIPT_IS_PIPE" == "true" ]]; then
+        # Запуск через bash <(curl ...) — скачиваем с GitHub
+        info "Устанавливаю amtcas из GitHub..."
+        if curl -fsSL --max-time 30 "$GITHUB_RAW_URL" -o "$INSTALL_PATH" 2>/dev/null; then
+            chmod +x "$INSTALL_PATH"
+            ok "Скрипт установлен — теперь запускай просто: ${BOLD}amtcas${RESET}"
+        else
+            warn "Не удалось установить amtcas автоматически"
+            warn "Установи вручную:"
+            warn "  curl -fsSL $GITHUB_RAW_URL -o $INSTALL_PATH && chmod +x $INSTALL_PATH"
+        fi
+    else
+        # Обычный запуск из файла — копируем
+        cp "$SCRIPT_SOURCE_PATH" "$INSTALL_PATH"
+        chmod +x "$INSTALL_PATH"
+        ok "Скрипт установлен — теперь запускай просто: ${BOLD}amtcas${RESET}"
+    fi
 }
 
 # ── Проверка обновлений ──────────────────────────────────────
@@ -820,7 +846,7 @@ do_update() {
         echo
         info "Перезапускаю скрипт с новой версией..."
         sleep 1
-        exec "$INSTALL_PATH" "$@"
+        exec "$INSTALL_PATH"
     else
         rm -f "$tmp"
         err "Не удалось скачать обновление — проверь интернет"
