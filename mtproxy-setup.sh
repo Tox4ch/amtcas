@@ -2,13 +2,13 @@
 # ============================================================
 #  🚀 MTProxy Cascade Installer
 #  Telemt + VLESS Reality (RU → Мост)
-#  v1.1.2 — интерактивная установка
+#  v1.2.0 — интерактивная установка
 # ============================================================
 
 set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
-VERSION="1.1.2"
+VERSION="1.2.0"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
