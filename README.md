@@ -4,7 +4,7 @@
 >
 > Клиент → 🇷🇺 RU-сервер (telemt) → 🌉 Мост (Xray) → 📨 Telegram
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue?style=flat-square)](https://github.com/Tox4ch/amtcas)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue?style=flat-square)](https://github.com/Tox4ch/amtcas)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%2022.04%20%7C%20Debian%2012-orange?style=flat-square)](#требования)
 
