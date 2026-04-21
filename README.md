@@ -1,4 +1,4 @@
-# 🌉 amtcas — Каскадный MTProxy установщик
+# 🌉 amtcas — Каскадный MTProxy
 
 > **Автоматическая настройка приватного Telegram MTProxy с VLESS+Reality туннелем**
 >
