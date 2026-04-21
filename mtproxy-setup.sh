@@ -226,7 +226,7 @@ setup_de() {
     local keypair
     keypair=$(docker run --rm ghcr.io/xtls/xray-core:latest x25519 2>&1)
     PRIVATE_KEY=$(echo "$keypair" | grep "PrivateKey:"           | awk '{print $2}')
-    PUBLIC_KEY=$(echo "$keypair"  | grep "Password (PublicKey)"  | awk '{print $2}')
+    PUBLIC_KEY=$(echo "$keypair"  | grep "Password (PublicKey)"  | awk '{print $3}')
 
     info "Генерирую UUID..."
     UUID=$(docker run --rm ghcr.io/xtls/xray-core:latest uuid | tr -d '[:space:]')
