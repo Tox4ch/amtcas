@@ -8,7 +8,7 @@
 set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
-VERSION="1.0.0"
+VERSION="1.1.0"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
@@ -197,11 +197,15 @@ install_deps() {
 main_menu() {
     hdr "📋 Главное меню"
     echo -e "  ${BOLD}1)${RESET} 🌉  Настроить сервер-мост — Xray VLESS+Reality"
-    echo -e "  ${BOLD}2)${RESET} 🇷🇺  Настроить российский сервер  (RU) — Xray-клиент + telemt"
-    echo -e "  ${BOLD}3)${RESET} 🔍  Проверить статус всех сервисов"
-    echo -e "  ${BOLD}4)${RESET} ❌  Выйти"
+    echo -e "  ${BOLD}2)${RESET} 🇷🇺  Настроить российский сервер (RU) — Xray-клиент + telemt"
+    echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
+    echo -e "  ${BOLD}3)${RESET} 🔍  Мониторинг и статус сервисов"
+    echo -e "  ${BOLD}4)${RESET} ⚙️   Управление сервисами"
+    echo -e "  ${BOLD}5)${RESET} 🔄  Обновить Docker-образы"
+    echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
+    echo -e "  ${BOLD}6)${RESET} ❌  Выйти"
     echo
-    ask "Выбери пункт" MENU_CHOICE "1"
+    ask "Выбери пункт" MENU_CHOICE "3"
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -707,41 +711,416 @@ EOF
     echo
 }
 
-# ── Проверка статуса ─────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  МОНИТОРИНГ И СТАТУС
+# ══════════════════════════════════════════════════════════════
+
+# ── Вспомогательные функции мониторинга ─────────────────────
+
+# Возвращает uptime контейнера в человекочитаемом виде
+_container_uptime() {
+    local name="$1"
+    local started
+    started=$(docker inspect --format '{{.State.StartedAt}}' "$name" 2>/dev/null || true)
+    [[ -z "$started" ]] && echo "—" && return
+
+    local start_ts now_ts diff
+    start_ts=$(date -d "$started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${started:0:19}" +%s 2>/dev/null || true)
+    now_ts=$(date +%s)
+    [[ -z "$start_ts" ]] && echo "—" && return
+
+    diff=$(( now_ts - start_ts ))
+    local days=$(( diff / 86400 ))
+    local hours=$(( (diff % 86400) / 3600 ))
+    local mins=$(( (diff % 3600) / 60 ))
+
+    if (( days > 0 )); then
+        echo "${days}д ${hours}ч ${mins}м"
+    elif (( hours > 0 )); then
+        echo "${hours}ч ${mins}м"
+    else
+        echo "${mins}м"
+    fi
+}
+
+# Возвращает статус контейнера цветом
+_container_status_line() {
+    local name="$1" label="$2"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${name}$"; then
+        local uptime
+        uptime=$(_container_uptime "$name")
+        echo -e "  ${GREEN}●${RESET} ${BOLD}${label}${RESET}  ${GREEN}запущен${RESET}  ${DIM}(uptime: ${uptime})${RESET}"
+    elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${name}$"; then
+        local reason
+        reason=$(docker inspect --format '{{.State.Error}}' "$name" 2>/dev/null | head -c 60 || true)
+        echo -e "  ${RED}●${RESET} ${BOLD}${label}${RESET}  ${RED}остановлен${RESET}  ${DIM}${reason}${RESET}"
+    else
+        echo -e "  ${DIM}●${RESET} ${BOLD}${label}${RESET}  ${DIM}не существует${RESET}"
+    fi
+}
+
+# Запрашивает telemt API и возвращает JSON или пустую строку
+_telemt_api() {
+    local endpoint="$1"
+    curl -sf --max-time 5 "http://127.0.0.1:9091${endpoint}" 2>/dev/null || true
+}
+
 check_status() {
-    hdr "🔍 Проверка статуса сервисов"
+    hdr "🔍 Мониторинг и статус сервисов"
 
-    # xray-server (DE)
-    if docker ps --format '{{.Names}}' | grep -q "xray-server"; then
-        ok "xray-мост — запущен"
-    else
-        warn "xray-мост — не запущен (ожидаемо если это RU-сервер)"
-    fi
+    # ── Контейнеры ───────────────────────────────────────────
+    echo -e "${BOLD}Контейнеры:${RESET}"
+    echo
+    _container_status_line "xray-server" "xray-server (мост)"
+    _container_status_line "xray-client" "xray-client (RU)  "
+    _container_status_line "telemt"      "telemt MTProxy    "
+    echo
 
-    # xray-client (RU)
-    if docker ps --format '{{.Names}}' | grep -q "xray-client"; then
-        ok "xray-client — запущен"
-        info "Проверяю туннель..."
-        local tip
-        tip=$(curl -s --socks5 127.0.0.1:1080 --max-time 10 https://ifconfig.me 2>/dev/null || true)
-        if [[ -n "$tip" ]]; then
-            ok "Туннель работает → внешний IP: ${BOLD}${tip}${RESET}"
+    # ── Туннель VLESS ─────────────────────────────────────────
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^xray-client$"; then
+        sep
+        echo -e "${BOLD}Туннель VLESS+Reality:${RESET}"
+        echo
+        info "Проверяю связность через SOCKS5 :1080..."
+        local tunnel_ip
+        tunnel_ip=$(curl -s --socks5 127.0.0.1:1080 --max-time 10 https://ifconfig.me 2>/dev/null || true)
+        if [[ -n "$tunnel_ip" ]]; then
+            ok "Туннель активен  →  внешний IP: ${BOLD}${tunnel_ip}${RESET}"
         else
-            err "Туннель не отвечает"
+            err "Туннель не отвечает — трафик не проходит через мост"
         fi
-    else
-        warn "xray-client — не запущен"
+        echo
     fi
 
-    # telemt
-    if docker ps --format '{{.Names}}' | grep -q "^telemt$"; then
-        ok "telemt MTProxy — запущен"
-        local link
-        link=$(cd ~/mtproxy 2>/dev/null && docker compose logs 2>/dev/null | grep "tg://" | tail -1 | grep -oP 'tg://[^\s]+' || true)
-        [[ -n "$link" ]] && info "Ссылка: ${CYAN}${link}${RESET}"
-    else
-        warn "telemt — не запущен"
+    # ── telemt API ────────────────────────────────────────────
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^telemt$"; then
+        sep
+        echo -e "${BOLD}telemt — пользователи и ссылки:${RESET}"
+        echo
+
+        local api_resp
+        api_resp=$(_telemt_api "/v1/users")
+
+        if [[ -n "$api_resp" ]] && command -v jq &>/dev/null; then
+            # Парсим через jq: ожидаем {"users":[{"name":...,"secret":...,"link":...},...]}
+            local user_count
+            user_count=$(echo "$api_resp" | jq -r '.users | length' 2>/dev/null || true)
+
+            if [[ -n "$user_count" && "$user_count" != "null" && "$user_count" -gt 0 ]]; then
+                echo "$api_resp" | jq -r '.users[] | "\(.name)|\(.secret // "—")|\(.link // "—")"' 2>/dev/null \
+                | while IFS='|' read -r uname usecret ulink; do
+                    echo -e "  ${BOLD}${CYAN}${uname}${RESET}"
+                    echo -e "    Секрет:  ${DIM}${usecret}${RESET}"
+                    if [[ "$ulink" != "—" && -n "$ulink" ]]; then
+                        echo -e "    Ссылка:  ${BOLD}${CYAN}${ulink}${RESET}"
+                    fi
+                    echo
+                done
+            else
+                warn "API ответил, но список пользователей пуст или неизвестный формат"
+                echo -e "  ${DIM}Сырой ответ API:${RESET}"
+                echo "$api_resp" | head -5
+                echo
+            fi
+        elif [[ -n "$api_resp" ]]; then
+            # jq недоступен — выводим raw
+            info "API telemt доступен (jq не установлен, вывод сырой):"
+            echo -e "  ${DIM}${api_resp}${RESET}"
+            echo
+        else
+            # API недоступен — fallback на логи
+            warn "API telemt недоступен (порт 9091 не отвечает)"
+            info "Получаю ссылки из логов..."
+            local log_link
+            log_link=$(cd ~/mtproxy 2>/dev/null && docker compose logs 2>/dev/null \
+                | grep "tg://" | tail -3 | grep -oP 'tg://[^\s]+' || true)
+            if [[ -n "$log_link" ]]; then
+                echo "$log_link" | while read -r lnk; do
+                    echo -e "  ${CYAN}${lnk}${RESET}"
+                done
+            else
+                warn "Ссылки в логах не найдены"
+            fi
+            echo
+        fi
+
+        # ── Соединения (если API поддерживает) ───────────────
+        local conn_resp
+        conn_resp=$(_telemt_api "/v1/connections")
+        if [[ -n "$conn_resp" ]] && command -v jq &>/dev/null; then
+            local conn_count
+            conn_count=$(echo "$conn_resp" | jq -r 'if type=="array" then length elif .connections then .connections|length else 0 end' 2>/dev/null || true)
+            if [[ -n "$conn_count" && "$conn_count" != "0" ]]; then
+                sep
+                echo -e "${BOLD}Активные соединения:${RESET} ${CYAN}${conn_count}${RESET}"
+                echo
+            fi
+        fi
+
+        # ── Последние строки логов telemt ─────────────────────
+        sep
+        echo -e "${BOLD}Последние события telemt (10 строк):${RESET}"
+        echo
+        cd ~/mtproxy 2>/dev/null && docker compose logs --tail=10 --no-log-prefix 2>/dev/null \
+            | sed "s/^/  ${DIM}/" | sed "s/$/${RESET}/" || true
+        echo
     fi
+
+    # ── Системные ресурсы контейнеров ────────────────────────
+    local running
+    running=$(docker ps --format '{{.Names}}' 2>/dev/null \
+        | grep -E "^(telemt|xray-client|xray-server)$" || true)
+
+    if [[ -n "$running" ]]; then
+        sep
+        echo -e "${BOLD}Использование ресурсов:${RESET}"
+        echo
+        # docker stats один снимок (--no-stream)
+        docker stats --no-stream --format \
+            "  {{.Name}}\t CPU: {{.CPUPerc}}\t RAM: {{.MemUsage}}" \
+            $running 2>/dev/null || true
+        echo
+    fi
+}
+
+
+# ══════════════════════════════════════════════════════════════
+#  УПРАВЛЕНИЕ СЕРВИСАМИ
+# ══════════════════════════════════════════════════════════════
+
+# Определяет рабочую директорию контейнера
+_compose_dir() {
+    case "$1" in
+        telemt)       echo ~/mtproxy ;;
+        xray-client)  echo ~/xray-client ;;
+        xray-server)  echo ~/xray-server ;;
+    esac
+}
+
+# Выполняет docker compose команду для контейнера со спиннером
+_compose_action() {
+    local name="$1" action="$2" label="$3"
+    local dir
+    dir=$(_compose_dir "$name")
+
+    if [[ ! -f "${dir}/docker-compose.yml" ]]; then
+        err "Конфиг ${dir}/docker-compose.yml не найден — сервис не установлен на этом сервере"
+        return 1
+    fi
+
+    (cd "$dir" && docker compose "$action" 2>/dev/null) &
+    spinner $! "${label}..."
+    wait $! || true
+}
+
+# Меню выбора сервиса
+_pick_service() {
+    local varname="$1"
+    echo
+    echo -e "  ${BOLD}1)${RESET} telemt MTProxy"
+    echo -e "  ${BOLD}2)${RESET} xray-client (VLESS RU)"
+    echo -e "  ${BOLD}3)${RESET} xray-server (мост)"
+    echo -e "  ${BOLD}4)${RESET} Все сервисы"
+    echo
+    local choice
+    ask "Выбери сервис" choice "1"
+
+    case "$choice" in
+        1) printf -v "$varname" '%s' "telemt" ;;
+        2) printf -v "$varname" '%s' "xray-client" ;;
+        3) printf -v "$varname" '%s' "xray-server" ;;
+        4) printf -v "$varname" '%s' "all" ;;
+        *) warn "Неверный выбор"; return 1 ;;
+    esac
+}
+
+# Действие над одним или всеми сервисами
+_run_on_service() {
+    local svc="$1" action="$2" verb="$3"
+    if [[ "$svc" == "all" ]]; then
+        for s in telemt xray-client xray-server; do
+            local dir
+            dir=$(_compose_dir "$s")
+            [[ -f "${dir}/docker-compose.yml" ]] || continue
+            _compose_action "$s" "$action" "${verb} ${s}"
+            ok "${s} — ${verb} выполнен"
+        done
+    else
+        _compose_action "$svc" "$action" "${verb} ${svc}" || return 1
+        ok "${svc} — ${verb} выполнен"
+    fi
+}
+
+manage_services() {
+    hdr "⚙️  Управление сервисами"
+
+    echo -e "  ${BOLD}1)${RESET} ▶️   Запустить"
+    echo -e "  ${BOLD}2)${RESET} ⏹️   Остановить"
+    echo -e "  ${BOLD}3)${RESET} 🔁  Перезапустить"
+    echo -e "  ${BOLD}4)${RESET} 📋  Показать логи"
+    echo -e "  ${BOLD}5)${RESET} ◀️   Назад"
+    echo
+    local action_choice
+    ask "Действие" action_choice "3"
+
+    [[ "$action_choice" == "5" ]] && return
+
+    local svc
+    hdr "Выбери сервис"
+    _pick_service svc || return
+
+    echo
+
+    case "$action_choice" in
+        1)
+            _run_on_service "$svc" "up -d" "Запуск"
+            ;;
+        2)
+            if confirm "Остановить ${svc}? Клиенты потеряют соединение."; then
+                _run_on_service "$svc" "stop" "Остановка"
+            else
+                info "Отменено"
+            fi
+            ;;
+        3)
+            _run_on_service "$svc" "restart" "Перезапуск"
+            ;;
+        4)
+            # Логи — интерактивный режим, без спиннера
+            local target_svc="$svc"
+            if [[ "$target_svc" == "all" ]]; then
+                ask "Сколько строк показать на сервис" LOG_LINES "50"
+                for s in telemt xray-client xray-server; do
+                    local dir
+                    dir=$(_compose_dir "$s")
+                    [[ -f "${dir}/docker-compose.yml" ]] || continue
+                    hdr "📋 Логи: ${s}"
+                    (cd "$dir" && docker compose logs --tail="${LOG_LINES}" --no-log-prefix 2>/dev/null) || true
+                done
+            else
+                local dir
+                dir=$(_compose_dir "$target_svc")
+                if [[ ! -f "${dir}/docker-compose.yml" ]]; then
+                    err "Сервис не установлен на этом сервере"
+                    return 1
+                fi
+                ask "Сколько строк показать" LOG_LINES "50"
+                local follow_flag=""
+                confirm "Следить за логами в реальном времени? (Ctrl+C для выхода)" && follow_flag="-f"
+                hdr "📋 Логи: ${target_svc}"
+                # shellcheck disable=SC2086
+                (cd "$dir" && docker compose logs --tail="${LOG_LINES}" --no-log-prefix $follow_flag 2>/dev/null) || true
+            fi
+            ;;
+        *)
+            warn "Неверный выбор"
+            ;;
+    esac
+
+    echo
+}
+
+
+# ══════════════════════════════════════════════════════════════
+#  ОБНОВЛЕНИЕ DOCKER-ОБРАЗОВ
+# ══════════════════════════════════════════════════════════════
+
+update_images() {
+    hdr "🔄 Обновление Docker-образов"
+
+    echo -e "${DIM}Будут обновлены образы для всех установленных сервисов."
+    echo -e "Сервисы будут кратко недоступны во время перезапуска.${RESET}"
+    echo
+
+    # Собираем список установленных сервисов
+    local services=()
+    local dirs=()
+
+    [[ -f ~/mtproxy/docker-compose.yml      ]] && services+=("telemt")      && dirs+=(~/mtproxy)
+    [[ -f ~/xray-client/docker-compose.yml  ]] && services+=("xray-client") && dirs+=(~/xray-client)
+    [[ -f ~/xray-server/docker-compose.yml  ]] && services+=("xray-server") && dirs+=(~/xray-server)
+
+    if [[ ${#services[@]} -eq 0 ]]; then
+        warn "Не найдено ни одного установленного сервиса"
+        warn "Сначала выполни установку (пункты 1 или 2)"
+        return
+    fi
+
+    echo -e "${BOLD}Найдены сервисы:${RESET}"
+    for s in "${services[@]}"; do
+        echo -e "  ${CYAN}•${RESET} ${s}"
+    done
+    echo
+
+    if ! confirm "Начать обновление образов?"; then
+        info "Отменено"
+        return
+    fi
+
+    echo
+
+    local updated=0
+    local failed=0
+
+    for i in "${!services[@]}"; do
+        local svc="${services[$i]}"
+        local dir="${dirs[$i]}"
+
+        hdr "📦 ${svc}"
+
+        # 1. Pull нового образа
+        info "Скачиваю новый образ..."
+        local pull_output
+        if pull_output=$(cd "$dir" && docker compose pull 2>&1); then
+            # Проверяем действительно ли был обновлён образ
+            if echo "$pull_output" | grep -q "Pull complete\|Downloaded newer image\|Pulling"; then
+                ok "Образ обновлён"
+            else
+                ok "Образ актуален"
+            fi
+        else
+            err "Не удалось скачать образ"
+            echo -e "${DIM}${pull_output}${RESET}"
+            (( failed++ )) || true
+            continue
+        fi
+
+        # 2. Перезапуск только если контейнер запущен
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${svc}$"; then
+            info "Перезапускаю с новым образом..."
+            (cd "$dir" && docker compose up -d 2>/dev/null) &
+            spinner $! "Перезапуск ${svc}..."
+            wait $! || true
+
+            sleep 2
+
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${svc}$"; then
+                ok "${svc} запущен с новым образом"
+                (( updated++ )) || true
+            else
+                err "${svc} не запустился после обновления"
+                warn "Логи:"
+                (cd "$dir" && docker compose logs --tail=15 2>/dev/null) || true
+                (( failed++ )) || true
+            fi
+        else
+            info "${svc} не запущен — образ скачан, но перезапуск пропущен"
+            (( updated++ )) || true
+        fi
+
+        echo
+    done
+
+    # ── Очистка устаревших образов ────────────────────────────
+    sep
+    info "Очищаю неиспользуемые образы Docker..."
+    local pruned
+    pruned=$(docker image prune -f 2>/dev/null | grep "reclaimed\|Total reclaimed" || true)
+    [[ -n "$pruned" ]] && ok "Очистка: ${pruned}" || ok "Нечего удалять"
+
+    echo
+    sep
+    echo -e "${BOLD}Итог:${RESET}  обновлено ${GREEN}${updated}${RESET}  /  ошибок ${RED}${failed}${RESET}"
     echo
 }
 
@@ -868,7 +1247,9 @@ main() {
             1) setup_de ;;
             2) setup_ru ;;
             3) check_status ;;
-            4) echo -e "\n${DIM}До свидания! 👋${RESET}\n"; exit 0 ;;
+            4) manage_services ;;
+            5) update_images ;;
+            6) echo -e "\n${DIM}До свидания! 👋${RESET}\n"; exit 0 ;;
             *) warn "Неверный выбор, попробуй снова" ;;
         esac
 
