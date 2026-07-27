@@ -8,7 +8,7 @@
 set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
-VERSION="1.3.0"
+VERSION="1.3.1"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
@@ -186,20 +186,106 @@ install_deps() {
     fi
 }
 
-# ── Главное меню ─────────────────────────────────────────────
-main_menu() {
-    hdr "📋 Главное меню"
-    echo -e "  ${BOLD}1)${RESET} 🌉  Настроить сервер-мост — Xray VLESS+Reality"
-    echo -e "  ${BOLD}2)${RESET} 🇷🇺  Настроить российский сервер (RU) — Xray-клиент + telemt"
-    echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
-    echo -e "  ${BOLD}3)${RESET} 🔍  Мониторинг и статус сервисов"
-    echo -e "  ${BOLD}4)${RESET} ⚙️   Управление сервисами"
-    echo -e "  ${BOLD}5)${RESET} 🔄  Обновить Docker-образы"
-    echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
-    echo -e "  ${BOLD}6)${RESET} 🧹  Полное удаление (образы, конфиги, настройки)"
-    echo -e "  ${BOLD}7)${RESET} ❌  Выйти"
+# ── Определение роли сервера ─────────────────────────────────
+# ROLE: "bridge" | "ru" | "both" | "none"
+detect_role() {
+    local has_bridge=false has_ru=false
+    [[ -f ~/xray-server/docker-compose.yml ]] && has_bridge=true
+    [[ -f ~/xray-client/docker-compose.yml && -f ~/mtproxy/docker-compose.yml ]] && has_ru=true
+
+    if $has_bridge && $has_ru; then
+        ROLE="both"
+    elif $has_bridge; then
+        ROLE="bridge"
+    elif $has_ru; then
+        ROLE="ru"
+    else
+        ROLE="none"
+    fi
+}
+
+# ── Краткий статус (одна-две строки, без деталей) ────────────
+_dot() {
+    # _dot <container_name> → цветная точка по статусу
+    local name="$1"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${name}$"; then
+        echo -ne "${GREEN}●${RESET}"
+    elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${name}$"; then
+        echo -ne "${RED}●${RESET}"
+    else
+        echo -ne "${DIM}●${RESET}"
+    fi
+}
+
+mini_status() {
+    case "$ROLE" in
+        bridge)
+            echo -e "  ${DIM}Роль: Сервер-мост${RESET}   $(_dot xray-server) xray-server"
+            ;;
+        ru)
+            local conns="—"
+            local api_resp
+            api_resp=$(_telemt_api "/v1/users")
+            if [[ -n "$api_resp" ]] && command -v jq &>/dev/null; then
+                conns=$(echo "$api_resp" | jq -r '[.data[].current_connections // 0] | add // 0' 2>/dev/null || echo "—")
+            fi
+            echo -e "  ${DIM}Роль: RU-сервер${RESET}   $(_dot xray-client) xray-client  $(_dot telemt) telemt  ${DIM}(соединений: ${conns})${RESET}"
+            ;;
+        both)
+            echo -e "  ${DIM}Роль: мост + RU (на одном хосте)${RESET}   $(_dot xray-server) xray-server  $(_dot xray-client) xray-client  $(_dot telemt) telemt"
+            ;;
+        none)
+            echo -e "  ${DIM}Роль: не настроено — выбери п.1 или п.2${RESET}"
+            ;;
+    esac
     echo
-    ask "Выбери пункт" MENU_CHOICE "3"
+}
+
+# ── Главное меню (адаптируется под роль сервера) ─────────────
+main_menu() {
+    detect_role
+    hdr "📋 Главное меню"
+    mini_status
+
+    MENU_ACTIONS=()
+    local idx=1
+
+    if [[ "$ROLE" == "none" || "$ROLE" == "bridge" || "$ROLE" == "both" ]]; then
+        if [[ "$ROLE" == "none" || "$ROLE" == "both" ]]; then
+            echo -e "  ${BOLD}${idx})${RESET} 🌉  Настроить сервер-мост — Xray VLESS+Reality"
+            MENU_ACTIONS+=("setup_de"); ((idx++))
+        fi
+    fi
+    if [[ "$ROLE" == "none" || "$ROLE" == "ru" || "$ROLE" == "both" ]]; then
+        echo -e "  ${BOLD}${idx})${RESET} 🇷🇺  Настроить российский сервер (RU) — Xray-клиент + telemt"
+        MENU_ACTIONS+=("setup_ru"); ((idx++))
+    fi
+    if [[ "$ROLE" == "bridge" ]]; then
+        echo -e "  ${BOLD}${idx})${RESET} 🌉  Перенастроить сервер-мост"
+        MENU_ACTIONS+=("setup_de"); ((idx++))
+    fi
+
+    echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
+    echo -e "  ${BOLD}${idx})${RESET} 🔍  Мониторинг и статус сервисов"
+    MENU_ACTIONS+=("check_status"); ((idx++))
+
+    if [[ "$ROLE" != "none" ]]; then
+        echo -e "  ${BOLD}${idx})${RESET} ⚙️   Управление сервисами"
+        MENU_ACTIONS+=("manage_services"); ((idx++))
+        echo -e "  ${BOLD}${idx})${RESET} 🔄  Обновить Docker-образы"
+        MENU_ACTIONS+=("update_images"); ((idx++))
+    fi
+
+    if [[ "$ROLE" != "none" ]]; then
+        echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
+        echo -e "  ${BOLD}${idx})${RESET} 🧹  Полное удаление (образы, конфиги, настройки)"
+        MENU_ACTIONS+=("uninstall_everything"); ((idx++))
+    fi
+
+    echo -e "  ${BOLD}${idx})${RESET} ❌  Выйти"
+    MENU_ACTIONS+=("exit"); ((idx++))
+    echo
+    ask "Выбери пункт" MENU_CHOICE "1"
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -1323,15 +1409,18 @@ main() {
 
     while true; do
         main_menu
-        case "$MENU_CHOICE" in
-            1) setup_de ;;
-            2) setup_ru ;;
-            3) check_status ;;
-            4) manage_services ;;
-            5) update_images ;;
-            6) uninstall_everything ;;
-            7) echo -e "\n${DIM}До свидания! 👋${RESET}\n"; exit 0 ;;
-            *) warn "Неверный выбор, попробуй снова" ;;
+
+        local action="${MENU_ACTIONS[$((MENU_CHOICE - 1))]:-}"
+
+        case "$action" in
+            setup_de)              setup_de ;;
+            setup_ru)              setup_ru ;;
+            check_status)          check_status ;;
+            manage_services)       manage_services ;;
+            update_images)         update_images ;;
+            uninstall_everything)  uninstall_everything ;;
+            exit)                  echo -e "\n${DIM}До свидания! 👋${RESET}\n"; exit 0 ;;
+            *)                     warn "Неверный выбор, попробуй снова"; continue ;;
         esac
 
         echo
