@@ -2,19 +2,17 @@
 # ============================================================
 #  🚀 MTProxy Cascade Installer
 #  Telemt + VLESS Reality (RU → Мост)
-#  v1.2.0 — интерактивная установка
+#  v1.3.0 — интерактивная установка
 # ============================================================
 
 set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
-VERSION="1.2.0"
+VERSION="1.3.0"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
 # ── Определяем способ запуска ────────────────────────────────
-# При запуске через bash <(curl ...) $0 содержит путь к пайпу
-# вида /proc/PID/fd/N — это не реальный файл, cp его не осилит
 SCRIPT_IS_PIPE=false
 SCRIPT_SOURCE_PATH=""
 case "$0" in
@@ -44,12 +42,10 @@ err()  { echo -e "${RED}❌ $*${RESET}"; }
 sep()  { echo -e "${DIM}────────────────────────────────────────────────────${RESET}"; }
 hdr()  { echo -e "\n${BOLD}${BLUE}$*${RESET}"; sep; }
 
-# ── Требования ──────────────────────────────────────────────
 REQUIRED_CMDS=(curl docker openssl)
 
 # ── Хелперы ─────────────────────────────────────────────────
 ask() {
-    # ask "Подсказка" VARNAME [default]
     local prompt="$1" varname="$2" default="${3:-}"
     local hint=""
     [[ -n "$default" ]] && hint=" ${DIM}[${default}]${RESET}"
@@ -80,7 +76,6 @@ ask_secret() {
 }
 
 confirm() {
-    # confirm "Вопрос?" → 0=да 1=нет
     local prompt="$1"
     echo -ne "${BOLD}${YELLOW}$prompt [y/N]: ${RESET}"
     read -r ans
@@ -138,7 +133,6 @@ check_deps() {
         fi
     done
 
-    # docker compose (plugin v2)
     if docker compose version &>/dev/null 2>&1; then
         ok "docker compose — найден"
     else
@@ -172,7 +166,6 @@ install_deps() {
 
         install -m 0755 -d /etc/apt/keyrings
 
-        # Определяем дистрибутив
         local distro
         distro=$(. /etc/os-release && echo "$ID")
 
@@ -203,7 +196,8 @@ main_menu() {
     echo -e "  ${BOLD}4)${RESET} ⚙️   Управление сервисами"
     echo -e "  ${BOLD}5)${RESET} 🔄  Обновить Docker-образы"
     echo -e "  ${DIM}────────────────────────────────────────────────────${RESET}"
-    echo -e "  ${BOLD}6)${RESET} ❌  Выйти"
+    echo -e "  ${BOLD}6)${RESET} 🧹  Полное удаление (образы, конфиги, настройки)"
+    echo -e "  ${BOLD}7)${RESET} ❌  Выйти"
     echo
     ask "Выбери пункт" MENU_CHOICE "3"
 }
@@ -219,7 +213,6 @@ setup_de() {
     echo -e "и пробрасывает его напрямую в Telegram.${RESET}"
     echo
 
-    # ── Генерация ключей ────────────────────────────────────
     hdr "🔑 Генерация ключей"
 
     info "Генерирую X25519 ключевую пару..."
@@ -241,7 +234,6 @@ setup_de() {
     echo -e "  ${BOLD}UUID:${RESET}       ${UUID}"
     echo
 
-    # ── Параметры ────────────────────────────────────────────
     hdr "⚙️  Параметры сервера"
 
     ask "Порт для VLESS (рекомендуется 443)" BRDG_PORT "443"
@@ -251,7 +243,6 @@ setup_de() {
     short_id=$(openssl rand -hex 4)
     ask "Short ID (hex 4-16 символов)" SHORT_ID "$short_id"
 
-    # ── Создание файлов ──────────────────────────────────────
     hdr "📁 Создание конфигурации"
 
     mkdir -p ~/xray-server
@@ -322,14 +313,12 @@ EOF
     ok "config.json создан"
     ok "docker-compose.yml создан"
 
-    # ── Фаервол ──────────────────────────────────────────────
     hdr "🔒 Настройка фаервола"
     ufw allow OpenSSH  2>/dev/null || true
     ufw allow "${BRDG_PORT}/tcp" 2>/dev/null || true
     ufw --force enable 2>/dev/null || true
     ok "UFW настроен — порт ${BRDG_PORT}/tcp открыт"
 
-    # ── Запуск ───────────────────────────────────────────────
     hdr "🚀 Запуск Xray"
 
     info "Загружаю образ и запускаю контейнер..."
@@ -347,7 +336,6 @@ EOF
         exit 1
     fi
 
-    # ── Итог ─────────────────────────────────────────────────
     echo
     echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${RESET}"
     echo -e "${BOLD}${GREEN}  ✅ Сервер-мост настроен успешно!${RESET}"
@@ -378,7 +366,6 @@ setup_ru() {
     echo -e "и туннелирует трафик через сервер-мост по VLESS+Reality.${RESET}"
     echo
 
-    # ── Данные сервера-моста ────────────────────────────────
     hdr "📡 Данные сервера-моста"
     info "Введи данные, которые были получены при настройке сервера-моста"
     echo
@@ -390,7 +377,6 @@ setup_ru() {
     ask "Short ID" BRDG_SHORT_ID "abcdef1234567890"
     ask "SNI-домен (должен совпадать с мостом)" BRDG_SNI "www.google.com"
 
-    # ── Параметры MTProxy ────────────────────────────────────
     hdr "⚙️  Параметры MTProxy"
 
     info "Генерирую секрет для клиентов Telegram..."
@@ -401,7 +387,6 @@ setup_ru() {
     ask "Имя пользователя в конфиге" MT_USER "myuser"
     ask "TLS-домен для камуфляжа MTProxy" MT_TLS_DOMAIN "www.google.com"
 
-    # ── sysctl ───────────────────────────────────────────────
     hdr "⚙️  Системные настройки"
     info "Разрешаю бинд на порты < 1024 для non-root контейнера..."
     sysctl -w net.ipv4.ip_unprivileged_port_start=443 > /dev/null
@@ -410,7 +395,6 @@ setup_ru() {
         || echo "net.ipv4.ip_unprivileged_port_start=443" >> /etc/sysctl.conf
     ok "net.ipv4.ip_unprivileged_port_start=443 установлен"
 
-    # ── Создание xray-client ─────────────────────────────────
     hdr "📁 Создание конфигурации Xray-клиента"
 
     mkdir -p ~/xray-client
@@ -490,7 +474,6 @@ EOF
     ok "~/xray-client/config.json создан"
     ok "~/xray-client/docker-compose.yml создан"
 
-    # ── Создание telemt ──────────────────────────────────────
     hdr "📁 Создание конфигурации telemt"
 
     mkdir -p ~/mtproxy
@@ -582,7 +565,6 @@ EOF
     ok "~/mtproxy/telemt.toml создан"
     ok "~/mtproxy/docker-compose.yml создан"
 
-    # ── Фаервол ──────────────────────────────────────────────
     hdr "🔒 Настройка фаервола"
     ufw allow OpenSSH  2>/dev/null || true
     ufw allow 443/tcp  2>/dev/null || true
@@ -590,7 +572,6 @@ EOF
     ufw --force enable 2>/dev/null || true
     ok "UFW: 443/tcp открыт, 1080/tcp закрыт снаружи"
 
-    # ── Запуск xray-client ───────────────────────────────────
     hdr "🚀 Запуск Xray-клиента"
 
     cd ~/xray-client
@@ -600,12 +581,11 @@ EOF
     wait $! || true
     sleep 3
 
-    # ── Проверка туннеля ─────────────────────────────────────
     hdr "🔍 Проверка VLESS-туннеля"
 
     info "Проверяю что трафик идёт через мост..."
     local tunnel_ip
-    tunnel_ip=$(curl -s --socks5 127.0.0.1:1080 --max-time 10 https://ifconfig.me 2>/dev/null || true)
+    tunnel_ip=$(curl -s --socks5-hostname 127.0.0.1:1080 --max-time 15 https://ifconfig.me 2>/dev/null || true)
 
     if [[ "$tunnel_ip" == "$BRDG_IP" ]]; then
         ok "Туннель работает! Внешний IP через туннель: ${BOLD}${tunnel_ip}${RESET}"
@@ -624,7 +604,6 @@ EOF
         fi
     fi
 
-    # ── Запуск telemt ────────────────────────────────────────
     hdr "🚀 Запуск telemt MTProxy"
 
     cd ~/mtproxy
@@ -642,22 +621,18 @@ EOF
         exit 1
     fi
 
-    # ── Получить ссылку ──────────────────────────────────────
     sleep 2
     local RU_IP
     RU_IP=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
     local TG_LINK="tg://proxy?server=${RU_IP}&port=443&secret=ee${MT_SECRET}"
 
-    # Попробовать получить ссылку из логов
     local LOG_LINK
     LOG_LINK=$(cd ~/mtproxy && docker compose logs 2>/dev/null | grep "tg://" | tail -1 | grep -oP 'tg://[^\s]+' || true)
     [[ -n "$LOG_LINK" ]] && TG_LINK="$LOG_LINK"
 
-    # ── Финальная проверка пути ──────────────────────────────
     print_summary "$RU_IP" "$tunnel_ip" "$TG_LINK"
 }
 
-# ── Финальный отчёт ─────────────────────────────────────────
 print_summary() {
     local ru_ip="$1" tunnel_ip="$2" tg_link="$3"
 
@@ -689,9 +664,11 @@ EOF
     echo
 
     sep
-    echo -e "  ${BOLD}🔗 Ссылка для подключения:${RESET}"
+    echo -e "  ${BOLD}🔗 Ссылка для подключения (MTProto, вставлять целиком в Telegram):${RESET}"
     echo
     echo -e "  ${BOLD}${CYAN}${tg_link}${RESET}"
+    echo
+    warn "Это единственная корректная ссылка для клиента. Порт 1080 (SOCKS5) — внутренний, наружу не открыт и в Telegram не используется."
     echo
     sep
     echo
@@ -715,9 +692,6 @@ EOF
 #  МОНИТОРИНГ И СТАТУС
 # ══════════════════════════════════════════════════════════════
 
-# ── Вспомогательные функции мониторинга ─────────────────────
-
-# Возвращает uptime контейнера в человекочитаемом виде
 _container_uptime() {
     local name="$1"
     local started
@@ -743,7 +717,6 @@ _container_uptime() {
     fi
 }
 
-# Возвращает статус контейнера цветом
 _container_status_line() {
     local name="$1" label="$2"
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${name}$"; then
@@ -759,7 +732,6 @@ _container_status_line() {
     fi
 }
 
-# Запрашивает telemt API и возвращает JSON или пустую строку
 _telemt_api() {
     local endpoint="$1"
     curl -sf --max-time 5 "http://127.0.0.1:9091${endpoint}" 2>/dev/null || true
@@ -781,9 +753,9 @@ check_status() {
         sep
         echo -e "${BOLD}Туннель VLESS+Reality:${RESET}"
         echo
-        info "Проверяю связность через SOCKS5 :1080..."
+        info "Проверяю связность через SOCKS5 :1080 (DNS через туннель)..."
         local tunnel_ip
-        tunnel_ip=$(curl -s --socks5 127.0.0.1:1080 --max-time 10 https://ifconfig.me 2>/dev/null || true)
+        tunnel_ip=$(curl -s --socks5-hostname 127.0.0.1:1080 --max-time 15 https://ifconfig.me 2>/dev/null || true)
         if [[ -n "$tunnel_ip" ]]; then
             ok "Туннель активен  →  внешний IP: ${BOLD}${tunnel_ip}${RESET}"
         else
@@ -802,15 +774,14 @@ check_status() {
         api_resp=$(_telemt_api "/v1/users")
 
         if [[ -n "$api_resp" ]] && command -v jq &>/dev/null; then
-            # Парсим через jq: ожидаем {"users":[{"name":...,"secret":...,"link":...},...]}
+            # Реальная схема ответа telemt: {"ok":true,"data":[{"username":...,"links":{"tls":[...]}}]}
             local user_count
-            user_count=$(echo "$api_resp" | jq -r '.users | length' 2>/dev/null || true)
+            user_count=$(echo "$api_resp" | jq -r '.data | length' 2>/dev/null || true)
 
             if [[ -n "$user_count" && "$user_count" != "null" && "$user_count" -gt 0 ]]; then
-                echo "$api_resp" | jq -r '.users[] | "\(.name)|\(.secret // "—")|\(.link // "—")"' 2>/dev/null \
-                | while IFS='|' read -r uname usecret ulink; do
-                    echo -e "  ${BOLD}${CYAN}${uname}${RESET}"
-                    echo -e "    Секрет:  ${DIM}${usecret}${RESET}"
+                echo "$api_resp" | jq -r '.data[] | "\(.username)|\(.links.tls[0] // .links.secure[0] // .links.classic[0] // "—")|\(.current_connections // 0)"' 2>/dev/null \
+                | while IFS='|' read -r uname ulink uconns; do
+                    echo -e "  ${BOLD}${CYAN}${uname}${RESET}  ${DIM}(активных соединений: ${uconns})${RESET}"
                     if [[ "$ulink" != "—" && -n "$ulink" ]]; then
                         echo -e "    Ссылка:  ${BOLD}${CYAN}${ulink}${RESET}"
                     fi
@@ -823,12 +794,10 @@ check_status() {
                 echo
             fi
         elif [[ -n "$api_resp" ]]; then
-            # jq недоступен — выводим raw
             info "API telemt доступен (jq не установлен, вывод сырой):"
             echo -e "  ${DIM}${api_resp}${RESET}"
             echo
         else
-            # API недоступен — fallback на логи
             warn "API telemt недоступен (порт 9091 не отвечает)"
             info "Получаю ссылки из логов..."
             local log_link
@@ -862,6 +831,7 @@ check_status() {
         echo -e "${BOLD}Последние события telemt (10 строк):${RESET}"
         echo
         cd ~/mtproxy 2>/dev/null && docker compose logs --tail=10 --no-log-prefix 2>/dev/null \
+            | sed -E 's/\x1b\[[0-9;]*m//g' \
             | sed "s/^/  ${DIM}/" | sed "s/$/${RESET}/" || true
         echo
     fi
@@ -875,7 +845,6 @@ check_status() {
         sep
         echo -e "${BOLD}Использование ресурсов:${RESET}"
         echo
-        # docker stats один снимок (--no-stream)
         docker stats --no-stream --format \
             "  {{.Name}}\t CPU: {{.CPUPerc}}\t RAM: {{.MemUsage}}" \
             $running 2>/dev/null || true
@@ -883,12 +852,10 @@ check_status() {
     fi
 }
 
-
 # ══════════════════════════════════════════════════════════════
 #  УПРАВЛЕНИЕ СЕРВИСАМИ
 # ══════════════════════════════════════════════════════════════
 
-# Определяет рабочую директорию контейнера
 _compose_dir() {
     case "$1" in
         telemt)       echo ~/mtproxy ;;
@@ -897,7 +864,6 @@ _compose_dir() {
     esac
 }
 
-# Выполняет docker compose команду для контейнера со спиннером
 _compose_action() {
     local name="$1" action="$2" label="$3"
     local dir
@@ -913,7 +879,6 @@ _compose_action() {
     wait $! || true
 }
 
-# Меню выбора сервиса
 _pick_service() {
     local varname="$1"
     echo
@@ -934,7 +899,6 @@ _pick_service() {
     esac
 }
 
-# Действие над одним или всеми сервисами
 _run_on_service() {
     local svc="$1" action="$2" verb="$3"
     if [[ "$svc" == "all" ]]; then
@@ -986,7 +950,6 @@ manage_services() {
             _run_on_service "$svc" "restart" "Перезапуск"
             ;;
         4)
-            # Логи — интерактивный режим, без спиннера
             local target_svc="$svc"
             if [[ "$target_svc" == "all" ]]; then
                 ask "Сколько строк показать на сервис" LOG_LINES "50"
@@ -1020,7 +983,6 @@ manage_services() {
     echo
 }
 
-
 # ══════════════════════════════════════════════════════════════
 #  ОБНОВЛЕНИЕ DOCKER-ОБРАЗОВ
 # ══════════════════════════════════════════════════════════════
@@ -1032,7 +994,6 @@ update_images() {
     echo -e "Сервисы будут кратко недоступны во время перезапуска.${RESET}"
     echo
 
-    # Собираем список установленных сервисов
     local services=()
     local dirs=()
 
@@ -1068,11 +1029,9 @@ update_images() {
 
         hdr "📦 ${svc}"
 
-        # 1. Pull нового образа
         info "Скачиваю новый образ..."
         local pull_output
         if pull_output=$(cd "$dir" && docker compose pull 2>&1); then
-            # Проверяем действительно ли был обновлён образ
             if echo "$pull_output" | grep -q "Pull complete\|Downloaded newer image\|Pulling"; then
                 ok "Образ обновлён"
             else
@@ -1085,7 +1044,6 @@ update_images() {
             continue
         fi
 
-        # 2. Перезапуск только если контейнер запущен
         if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${svc}$"; then
             info "Перезапускаю с новым образом..."
             (cd "$dir" && docker compose up -d 2>/dev/null) &
@@ -1111,7 +1069,6 @@ update_images() {
         echo
     done
 
-    # ── Очистка устаревших образов ────────────────────────────
     sep
     info "Очищаю неиспользуемые образы Docker..."
     local pruned
@@ -1124,15 +1081,145 @@ update_images() {
     echo
 }
 
+# ══════════════════════════════════════════════════════════════
+#  ПОЛНОЕ УДАЛЕНИЕ (контейнеры, образы, конфиги, системные настройки)
+# ══════════════════════════════════════════════════════════════
+
+# Список образов, которые скрипт мог затянуть
+_managed_images() {
+    echo "ghcr.io/xtls/xray-core:latest"
+    echo "whn0thacked/telemt-docker:latest"
+}
+
+uninstall_everything() {
+    hdr "🧹 Полное удаление MTProxy Cascade"
+
+    echo -e "${YELLOW}Это действие необратимо и удалит:${RESET}"
+    echo -e "  • Все контейнеры (telemt, xray-client, xray-server)"
+    echo -e "  • Docker-образы xray-core и telemt-docker"
+    echo -e "  • Docker volume telemt-data (ключи/состояние telemt)"
+    echo -e "  • Директории ~/mtproxy, ~/xray-client, ~/xray-server"
+    echo -e "  • Правила UFW, открытые скриптом (443/tcp, 1080/tcp)"
+    echo -e "  • Правку net.ipv4.ip_unprivileged_port_start в /etc/sysctl.conf"
+    echo
+
+    if ! confirm "Точно продолжить? Отменить будет нельзя"; then
+        info "Отменено"
+        return
+    fi
+
+    echo
+    if ! confirm "Последнее подтверждение — удаляем всё сейчас?"; then
+        info "Отменено"
+        return
+    fi
+
+    local removed_containers=0
+    local removed_images=0
+
+    # ── 1. Остановка и удаление контейнеров ──────────────────
+    hdr "🛑 Остановка и удаление контейнеров"
+    for name in telemt xray-client xray-server; do
+        local dir
+        dir=$(_compose_dir "$name")
+        if [[ -f "${dir}/docker-compose.yml" ]]; then
+            info "Останавливаю ${name}..."
+            (cd "$dir" && docker compose down -v --remove-orphans 2>/dev/null) &
+            spinner $! "Остановка ${name}..."
+            wait $! || true
+        fi
+        # Подчистка на случай контейнера без compose-файла рядом
+        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${name}$"; then
+            docker rm -f "$name" &>/dev/null || true
+        fi
+        ok "${name} — остановлен и удалён"
+        (( removed_containers++ )) || true
+    done
+
+    # ── 2. Удаление docker volume ────────────────────────────
+    hdr "🗑️  Удаление volume"
+    if docker volume ls --format '{{.Name}}' 2>/dev/null | grep -q "^mtproxy_telemt-data$\|^telemt-data$"; then
+        docker volume rm -f mtproxy_telemt-data telemt-data 2>/dev/null || true
+        ok "Volume telemt-data удалён"
+    else
+        info "Volume telemt-data не найден — пропускаю"
+    fi
+
+    # ── 3. Удаление образов без следов ───────────────────────
+    hdr "🗑️  Удаление Docker-образов"
+    while IFS= read -r img; do
+        [[ -z "$img" ]] && continue
+        if docker image inspect "$img" &>/dev/null; then
+            docker rmi -f "$img" &>/dev/null && ok "Удалён образ: ${img}" && (( removed_images++ )) || warn "Не удалось удалить ${img} (возможно, используется другим контейнером)"
+        else
+            info "Образ ${img} не найден — пропускаю"
+        fi
+    done < <(_managed_images)
+
+    info "Очищаю dangling-слои и build-кэш..."
+    docker image prune -f &>/dev/null || true
+    docker builder prune -f &>/dev/null || true
+    ok "Docker-кэш очищен"
+
+    # ── 4. Откат правил UFW ──────────────────────────────────
+    hdr "🔒 Откат правил фаервола"
+    if command -v ufw &>/dev/null; then
+        ufw delete allow 443/tcp  2>/dev/null || true
+        ufw delete allow "${BRDG_PORT:-443}/tcp" 2>/dev/null || true
+        ufw delete deny  1080/tcp 2>/dev/null || true
+        ok "Правила 443/tcp и 1080/tcp удалены из UFW"
+        warn "OpenSSH и остальные правила UFW не тронуты"
+    else
+        info "UFW не установлен — пропускаю"
+    fi
+
+    # ── 5. Откат sysctl ───────────────────────────────────────
+    hdr "⚙️  Откат системных настроек"
+    if grep -q "ip_unprivileged_port_start" /etc/sysctl.conf 2>/dev/null; then
+        sed -i '/ip_unprivileged_port_start/d' /etc/sysctl.conf
+        sysctl -w net.ipv4.ip_unprivileged_port_start=1024 &>/dev/null || true
+        ok "net.ipv4.ip_unprivileged_port_start возвращён к значению по умолчанию (1024)"
+    else
+        info "Правка sysctl не найдена — пропускаю"
+    fi
+
+    # ── 6. Удаление конфигов и директорий ────────────────────
+    hdr "📁 Удаление директорий с конфигами"
+    for dir in ~/mtproxy ~/xray-client ~/xray-server; do
+        if [[ -d "$dir" ]]; then
+            rm -rf "$dir"
+            ok "Удалено: ${dir}"
+        else
+            info "${dir} не найдена — пропускаю"
+        fi
+    done
+
+    # ── Итог ──────────────────────────────────────────────────
+    echo
+    echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${RESET}"
+    echo -e "${BOLD}${GREEN}  ✅ Удаление завершено${RESET}"
+    echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${RESET}"
+    echo -e "  Контейнеров обработано: ${CYAN}${removed_containers}${RESET}"
+    echo -e "  Образов удалено:        ${CYAN}${removed_images}${RESET}"
+    echo
+    warn "Сам скрипт (${INSTALL_PATH}) не удалён. Чтобы убрать полностью:"
+    echo -e "  ${DIM}rm -f ${INSTALL_PATH}${RESET}"
+    echo
+
+    if confirm "Удалить и сам скрипт-установщик тоже?"; then
+        rm -f "$INSTALL_PATH" 2>/dev/null || true
+        ok "Скрипт удалён. До свидания!"
+        exit 0
+    fi
+}
+
 # ── Самоустановка ────────────────────────────────────────────
 self_install() {
-    # Уже запущен из нужного места — ничего не делаем
     if [[ "$SCRIPT_SOURCE_PATH" == "$INSTALL_PATH" ]]; then
         return
     fi
 
     if [[ "$SCRIPT_IS_PIPE" == "true" ]]; then
-        # Запуск через bash <(curl ...) — скачиваем с GitHub
         info "Устанавливаю amtcas из GitHub..."
         if curl -fsSL --max-time 30 "$GITHUB_RAW_URL" -o "$INSTALL_PATH" 2>/dev/null; then
             chmod +x "$INSTALL_PATH"
@@ -1143,7 +1230,6 @@ self_install() {
             warn "  curl -fsSL $GITHUB_RAW_URL -o $INSTALL_PATH && chmod +x $INSTALL_PATH"
         fi
     else
-        # Обычный запуск из файла — копируем
         cp "$SCRIPT_SOURCE_PATH" "$INSTALL_PATH"
         chmod +x "$INSTALL_PATH"
         ok "Скрипт установлен — теперь запускай просто: ${BOLD}amtcas${RESET}"
@@ -1152,7 +1238,6 @@ self_install() {
 
 # ── Проверка обновлений ──────────────────────────────────────
 check_update() {
-    # Пропускаем если нет curl или нет сети
     if ! command -v curl &>/dev/null; then return; fi
 
     echo -ne "${DIM}🔄 Проверяю обновления...${RESET}"
@@ -1164,7 +1249,6 @@ check_update() {
         | cut -d'"' -f2
     ) || true
 
-    # Нет ответа от GitHub — пропускаем тихо
     if [[ -z "$remote_version" ]]; then
         printf "\r%-40s\r" " "
         return
@@ -1172,18 +1256,15 @@ check_update() {
 
     printf "\r%-40s\r" " "
 
-    # Сравниваем версии (semver: major.minor.patch)
     if [[ "$remote_version" == "$VERSION" ]]; then
         ok "Версия актуальна: ${BOLD}v${VERSION}${RESET}"
         return
     fi
 
-    # Проверяем что remote действительно новее через sort -V
     local newer
     newer=$(printf '%s\n%s\n' "$VERSION" "$remote_version" | sort -V | tail -1)
 
     if [[ "$newer" != "$remote_version" ]]; then
-        # remote старше или равна — игнорируем
         ok "Версия актуальна: ${BOLD}v${VERSION}${RESET}"
         return
     fi
@@ -1212,7 +1293,6 @@ do_update() {
     tmp=$(mktemp)
 
     if curl -fsSL --max-time 30 "$GITHUB_RAW_URL" -o "$tmp" 2>/dev/null; then
-        # Проверяем что скачалось валидное (содержит маркер VERSION=)
         if ! grep -q '^VERSION=' "$tmp"; then
             rm -f "$tmp"
             err "Скачанный файл повреждён — обновление отменено"
@@ -1249,7 +1329,8 @@ main() {
             3) check_status ;;
             4) manage_services ;;
             5) update_images ;;
-            6) echo -e "\n${DIM}До свидания! 👋${RESET}\n"; exit 0 ;;
+            6) uninstall_everything ;;
+            7) echo -e "\n${DIM}До свидания! 👋${RESET}\n"; exit 0 ;;
             *) warn "Неверный выбор, попробуй снова" ;;
         esac
 
