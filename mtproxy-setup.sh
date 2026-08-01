@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
 #  🚀 MTProxy Cascade Installer
-#  Telemt + VLESS Reality (RU → Мост)
-#  v1.3.1 — интерактивная установка
+#  v1.4.0
 # ============================================================
 
 set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
-VERSION="1.3.1"
+VERSION="1.4.0"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
@@ -243,6 +242,8 @@ mini_status() {
 
 # ── Главное меню (адаптируется под роль сервера) ─────────────
 main_menu() {
+    clear
+    print_banner
     detect_role
     hdr "📋 Главное меню"
     mini_status
@@ -289,6 +290,212 @@ main_menu() {
 }
 
 # ══════════════════════════════════════════════════════════════
+#  ВЫБОР ТРАНСПОРТА (общий для моста и RU)
+# ══════════════════════════════════════════════════════════════
+
+# Устанавливает переменные: TRANSPORT (tcp|grpc|xhttp), TRANSPORT_PARAM_NAME,
+# TRANSPORT_PARAM_VALUE (serviceName для grpc / path для xhttp, пусто для tcp)
+pick_transport() {
+    hdr "🚚 Выбор транспорта VLESS+Reality"
+    echo -e "${DIM}TCP/RAW  — классика, максимальная скорость, поддерживает flow (XTLS Vision).${RESET}"
+    echo -e "${DIM}           Уязвим к обрыву при большом числе параллельных хендшейков.${RESET}"
+    echo -e "${DIM}gRPC     — мультиплексирует множество запросов в один HTTP/2-поток.${RESET}"
+    echo -e "${DIM}           Устойчив к параллельным подключениям, flow не поддерживает.${RESET}"
+    echo -e "${DIM}xHTTP    — похож на gRPC, но маскируется под обычный HTTP-трафик.${RESET}"
+    echo -e "${DIM}           Тоже не поддерживает flow, обычно лучше проходит через DPI.${RESET}"
+    echo
+    echo -e "  ${BOLD}1)${RESET} TCP/RAW (по умолчанию, с XTLS Vision)"
+    echo -e "  ${BOLD}2)${RESET} gRPC"
+    echo -e "  ${BOLD}3)${RESET} xHTTP"
+    echo
+    warn "Транспорт и все связанные параметры (serviceName/path) ДОЛЖНЫ совпадать на мосту и RU-сервере."
+
+    local choice
+    ask "Выбери транспорт" choice "1"
+
+    TRANSPORT_PARAM_NAME=""
+    TRANSPORT_PARAM_VALUE=""
+
+    case "$choice" in
+        2)
+            TRANSPORT="grpc"
+            ask "serviceName для gRPC (должен совпадать на обеих сторонах)" TRANSPORT_PARAM_VALUE "cascade-grpc"
+            TRANSPORT_PARAM_NAME="serviceName"
+            ;;
+        3)
+            TRANSPORT="xhttp"
+            ask "path для xHTTP (должен совпадать на обеих сторонах, начинай с /)" TRANSPORT_PARAM_VALUE "/xhttp-cascade"
+            TRANSPORT_PARAM_NAME="path"
+            ;;
+        *)
+            TRANSPORT="tcp"
+            ;;
+    esac
+
+    ok "Выбран транспорт: ${BOLD}${TRANSPORT}${RESET}"
+}
+
+# JSON-фрагмент streamSettings для сервера-моста (inbound)
+_stream_settings_bridge_json() {
+    case "$TRANSPORT" in
+        grpc)
+            cat << EOF
+      "streamSettings": {
+        "network": "grpc",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${BRDG_SNI}:443",
+          "xver": 0,
+          "serverNames": ["${BRDG_SNI}"],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"]
+        },
+        "grpcSettings": {
+          "serviceName": "${TRANSPORT_PARAM_VALUE}"
+        }
+      },
+EOF
+            ;;
+        xhttp)
+            cat << EOF
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${BRDG_SNI}:443",
+          "xver": 0,
+          "serverNames": ["${BRDG_SNI}"],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"]
+        },
+        "xhttpSettings": {
+          "path": "${TRANSPORT_PARAM_VALUE}",
+          "mode": "auto"
+        }
+      },
+EOF
+            ;;
+        *)
+            cat << EOF
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${BRDG_SNI}:443",
+          "xver": 0,
+          "serverNames": ["${BRDG_SNI}"],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"]
+        }
+      },
+EOF
+            ;;
+    esac
+}
+
+# JSON-фрагмент clients[] для сервера-моста — flow только для TCP
+_client_json_bridge() {
+    if [[ "$TRANSPORT" == "tcp" ]]; then
+        cat << EOF
+          {
+            "id": "${UUID}",
+            "flow": "xtls-rprx-vision"
+          }
+EOF
+    else
+        cat << EOF
+          {
+            "id": "${UUID}"
+          }
+EOF
+    fi
+}
+
+# JSON-фрагмент streamSettings для RU-клиента (outbound)
+_stream_settings_client_json() {
+    case "$TRANSPORT" in
+        grpc)
+            cat << EOF
+      "streamSettings": {
+        "network": "grpc",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "fingerprint": "chrome",
+          "serverName": "${BRDG_SNI}",
+          "publicKey": "${BRDG_PUBLIC_KEY}",
+          "shortId": "${BRDG_SHORT_ID}",
+          "spiderX": "/"
+        },
+        "grpcSettings": {
+          "serviceName": "${TRANSPORT_PARAM_VALUE}"
+        }
+      }
+EOF
+            ;;
+        xhttp)
+            cat << EOF
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "fingerprint": "chrome",
+          "serverName": "${BRDG_SNI}",
+          "publicKey": "${BRDG_PUBLIC_KEY}",
+          "shortId": "${BRDG_SHORT_ID}",
+          "spiderX": "/"
+        },
+        "xhttpSettings": {
+          "path": "${TRANSPORT_PARAM_VALUE}",
+          "mode": "auto"
+        }
+      }
+EOF
+            ;;
+        *)
+            cat << EOF
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "fingerprint": "chrome",
+          "serverName": "${BRDG_SNI}",
+          "publicKey": "${BRDG_PUBLIC_KEY}",
+          "shortId": "${BRDG_SHORT_ID}",
+          "spiderX": "/"
+        }
+      }
+EOF
+            ;;
+    esac
+}
+
+# JSON-фрагмент users[] для RU-клиента — flow только для TCP
+_user_json_client() {
+    if [[ "$TRANSPORT" == "tcp" ]]; then
+        cat << EOF
+              {
+                "id": "${BRDG_UUID}",
+                "flow": "xtls-rprx-vision",
+                "encryption": "none"
+              }
+EOF
+    else
+        cat << EOF
+              {
+                "id": "${BRDG_UUID}",
+                "encryption": "none"
+              }
+EOF
+    fi
+}
+
+# ══════════════════════════════════════════════════════════════
 #  СЕРВЕР-МОСТ: Xray VLESS+Reality
 # ══════════════════════════════════════════════════════════════
 
@@ -329,48 +536,43 @@ setup_de() {
     short_id=$(openssl rand -hex 4)
     ask "Short ID (hex 4-16 символов)" SHORT_ID "$short_id"
 
+    pick_transport
+
     hdr "📁 Создание конфигурации"
 
     mkdir -p ~/xray-server
     cd ~/xray-server
 
-    cat > config.json << EOF
-{
-  "log": { "loglevel": "warning" },
-  "inbounds": [
     {
-      "tag": "vless-in",
-      "listen": "0.0.0.0",
-      "port": ${BRDG_PORT},
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${UUID}",
-            "flow": "xtls-rprx-vision"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "show": false,
-          "dest": "${BRDG_SNI}:443",
-          "xver": 0,
-          "serverNames": ["${BRDG_SNI}"],
-          "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"]
-        }
-      },
-      "sniffing": { "enabled": false }
-    }
-  ],
-  "outbounds": [
-    { "tag": "direct", "protocol": "freedom" }
-  ]
-}
+        echo '{'
+        echo '  "log": { "loglevel": "warning" },'
+        echo '  "inbounds": ['
+        echo '    {'
+        echo '      "tag": "vless-in",'
+        echo '      "listen": "0.0.0.0",'
+        echo "      \"port\": ${BRDG_PORT},"
+        echo '      "protocol": "vless",'
+        echo '      "settings": {'
+        echo '        "clients": ['
+        _client_json_bridge
+        echo '        ],'
+        echo '        "decryption": "none"'
+        echo '      },'
+        _stream_settings_bridge_json
+        echo '      "sniffing": { "enabled": false }'
+        echo '    }'
+        echo '  ],'
+        echo '  "outbounds": ['
+        echo '    { "tag": "direct", "protocol": "freedom" }'
+        echo '  ]'
+        echo '}'
+    } > config.json
+
+    # Сохраняем параметры транспорта — нужны для вывода данных RU-серверу
+    cat > .transport << EOF
+TRANSPORT=${TRANSPORT}
+TRANSPORT_PARAM_NAME=${TRANSPORT_PARAM_NAME}
+TRANSPORT_PARAM_VALUE=${TRANSPORT_PARAM_VALUE}
 EOF
 
     cat > docker-compose.yml << EOF
@@ -435,9 +637,14 @@ EOF
     echo -e "  ${CYAN}Public key:${RESET}  ${BOLD}${PUBLIC_KEY}${RESET}"
     echo -e "  ${CYAN}Short ID:${RESET}    ${BOLD}${SHORT_ID}${RESET}"
     echo -e "  ${CYAN}SNI:${RESET}         ${BOLD}${BRDG_SNI}${RESET}"
+    echo -e "  ${CYAN}Транспорт:${RESET}   ${BOLD}${TRANSPORT}${RESET}"
+    if [[ -n "$TRANSPORT_PARAM_NAME" ]]; then
+        echo -e "  ${CYAN}${TRANSPORT_PARAM_NAME}:${RESET}  ${BOLD}${TRANSPORT_PARAM_VALUE}${RESET}"
+    fi
     sep
     echo
     warn "Скопируй эти данные — они понадобятся при настройке RU-сервера!"
+    warn "Транспорт и его параметр ДОЛЖНЫ совпасть при настройке RU (пункт меню 2)."
     echo
 }
 
@@ -463,6 +670,9 @@ setup_ru() {
     ask "Short ID" BRDG_SHORT_ID "abcdef1234567890"
     ask "SNI-домен (должен совпадать с мостом)" BRDG_SNI "www.google.com"
 
+    pick_transport
+    warn "Транспорт и параметр (serviceName/path) должны быть ИДЕНТИЧНЫ тому, что задано на мосту!"
+
     hdr "⚙️  Параметры MTProxy"
 
     info "Генерирую секрет для клиентов Telegram..."
@@ -486,55 +696,41 @@ setup_ru() {
     mkdir -p ~/xray-client
     cd ~/xray-client
 
-    cat > config.json << EOF
-{
-  "log": { "loglevel": "warning" },
-  "inbounds": [
     {
-      "tag": "socks-in",
-      "listen": "127.0.0.1",
-      "port": 1080,
-      "protocol": "socks",
-      "settings": {
-        "auth": "noauth",
-        "udp": false
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "tag": "vless-out",
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "address": "${BRDG_IP}",
-            "port": ${BRDG_PORT},
-            "users": [
-              {
-                "id": "${BRDG_UUID}",
-                "flow": "xtls-rprx-vision",
-                "encryption": "none"
-              }
-            ]
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "show": false,
-          "fingerprint": "chrome",
-          "serverName": "${BRDG_SNI}",
-          "publicKey": "${BRDG_PUBLIC_KEY}",
-          "shortId": "${BRDG_SHORT_ID}",
-          "spiderX": "/"
-        }
-      }
-    }
-  ]
-}
+        echo '{'
+        echo '  "log": { "loglevel": "warning" },'
+        echo '  "inbounds": ['
+        echo '    {'
+        echo '      "tag": "socks-in",'
+        echo '      "listen": "127.0.0.1",'
+        echo '      "port": 1080,'
+        echo '      "protocol": "socks",'
+        echo '      "settings": {'
+        echo '        "auth": "noauth",'
+        echo '        "udp": false'
+        echo '      }'
+        echo '    }'
+        echo '  ],'
+        echo '  "outbounds": ['
+        echo '    {'
+        echo '      "tag": "vless-out",'
+        echo '      "protocol": "vless",'
+        echo '      "settings": {'
+        echo '        "vnext": ['
+        echo '          {'
+        echo "            \"address\": \"${BRDG_IP}\","
+        echo "            \"port\": ${BRDG_PORT},"
+        echo '            "users": ['
+        _user_json_client
+        echo '            ]'
+        echo '          }'
+        echo '        ]'
+        echo '      },'
+        _stream_settings_client_json
+        echo '    }'
+        echo '  ]'
+        echo '}'
+    } > config.json
 EOF
 
     cat > docker-compose.yml << EOF
