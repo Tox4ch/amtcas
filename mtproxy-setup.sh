@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
 #  🚀 MTProxy Cascade Installer
-#  v1.4.0
+#  v1.5.0
 # ============================================================
 
 set -uo pipefail
 
 # ── Версия и источник обновлений ─────────────────────────────
-VERSION="1.4.0"
+VERSION="1.5.0"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh"
 INSTALL_PATH="/usr/local/bin/amtcas"
 
@@ -649,6 +649,93 @@ EOF
 }
 
 # ══════════════════════════════════════════════════════════════
+#  SYN-ФИЛЬТР (nftables) — обход блокировки MTProto от 04.06
+# ══════════════════════════════════════════════════════════════
+#
+#  telemt в образе whn0thacked/telemt-docker собран как distroless
+#  контейнер без shell и без бинарников nft/iptables — встроенный
+#  server.listeners.synlimit применяться не может ни при каких
+#  capabilities контейнера. Поэтому SYN-лимит реализован на хосте,
+#  вне контейнера, через отдельную nftables-таблицу.
+#
+#  Классификатор iOS/macOS (ip ttl<65 + len 64 для IPv4,
+#  ip6 hoplimit<65 + len 84 для IPv6) и стартовые лимиты совпадают
+#  с дефолтами synlimit_ios_* из самого telemt — так что даже без
+#  нативной поддержки в этом образе логика идентична референсной.
+
+AMTCAS_NFT_TABLE="inet amtcas_synlimit"
+
+_amtcas_synlimit_ensure_nft() {
+    if command -v nft &>/dev/null; then
+        return 0
+    fi
+    info "Устанавливаю nftables..."
+    apt-get update -qq && apt-get install -y -qq nftables
+    command -v nft &>/dev/null
+}
+
+_amtcas_synlimit_remove() {
+    if command -v nft &>/dev/null && nft list table ${AMTCAS_NFT_TABLE} &>/dev/null; then
+        nft delete table ${AMTCAS_NFT_TABLE} 2>/dev/null || true
+    fi
+}
+
+# _amtcas_synlimit_apply <port>
+_amtcas_synlimit_apply() {
+    local port="$1"
+
+    if ! _amtcas_synlimit_ensure_nft; then
+        warn "nftables недоступен — SYN-фильтр не установлен, продолжаю без него"
+        return 1
+    fi
+
+    # Generic bucket: 48 SYN/минуту на source IP (~synlimit_seconds=60, synlimit_hitcount=48)
+    local main_rate="48/minute"
+    local main_burst="1"
+    local main_timeout="60s"
+
+    # iOS/macOS bucket: 12 SYN/сек, burst 24 (~synlimit_ios_hitcount/burst из telemt)
+    local ios_rate="12/second"
+    local ios_burst="24"
+    local ios_timeout="10s"
+
+    # Идемпотентность: сначала убираем старую таблицу, если осталась от предыдущего запуска
+    _amtcas_synlimit_remove
+
+    nft -f - << NFTEOF
+table ${AMTCAS_NFT_TABLE} {
+    chain input {
+        type filter hook input priority -5; policy accept;
+
+        tcp dport ${port} tcp flags & (syn | ack) == syn meta nfproto ipv4 ip ttl lt 65 meta length 64 \
+            meter amtcas_syn_ios4 { ip saddr timeout ${ios_timeout} limit rate ${ios_rate} burst ${ios_burst} packets } \
+            counter accept comment "amtcas-syn-ios4"
+
+        tcp dport ${port} tcp flags & (syn | ack) == syn meta nfproto ipv6 ip6 hoplimit lt 65 meta length 84 \
+            meter amtcas_syn_ios6 { ip6 saddr timeout ${ios_timeout} limit rate ${ios_rate} burst ${ios_burst} packets } \
+            counter accept comment "amtcas-syn-ios6"
+
+        tcp dport ${port} tcp flags & (syn | ack) == syn meta nfproto ipv4 \
+            meter amtcas_syn_main4 { ip saddr timeout ${main_timeout} limit rate over ${main_rate} burst ${main_burst} packets } \
+            counter drop comment "amtcas-syn-main4"
+
+        tcp dport ${port} tcp flags & (syn | ack) == syn meta nfproto ipv6 \
+            meter amtcas_syn_main6 { ip6 saddr timeout ${main_timeout} limit rate over ${main_rate} burst ${main_burst} packets } \
+            counter drop comment "amtcas-syn-main6"
+    }
+}
+NFTEOF
+
+    if nft list table ${AMTCAS_NFT_TABLE} &>/dev/null; then
+        ok "SYN-фильтр nftables установлен на порт ${port}"
+        return 0
+    else
+        err "Не удалось применить SYN-фильтр nftables"
+        return 1
+    fi
+}
+
+# ══════════════════════════════════════════════════════════════
 #  RU-СЕРВЕР: Xray-клиент + telemt
 # ══════════════════════════════════════════════════════════════
 
@@ -779,6 +866,8 @@ show = "*"
 
 [server]
 port = 443
+client_mss = "tspu"
+client_mss_bulk = "1400"
 
 [server.api]
 enabled = true
@@ -853,6 +942,10 @@ EOF
     ufw deny  1080/tcp 2>/dev/null || true
     ufw --force enable 2>/dev/null || true
     ok "UFW: 443/tcp открыт, 1080/tcp закрыт снаружи"
+
+    hdr "🛡️  Установка SYN-фильтра (nftables)"
+    info "Ограничиваю частоту SYN-пакетов на IP, чтобы обойти блокировку MTProto"
+    _amtcas_synlimit_apply 443 || warn "Продолжаю без SYN-фильтра — telemt может блокироваться DPI"
 
     hdr "🚀 Запуск Xray-клиента"
 
@@ -1381,6 +1474,7 @@ uninstall_everything() {
     echo -e "  • Docker-образы xray-core и telemt-docker"
     echo -e "  • Docker volume telemt-data (ключи/состояние telemt)"
     echo -e "  • Директории ~/mtproxy, ~/xray-client, ~/xray-server"
+    echo -e "  • SYN-фильтр nftables (таблица ${AMTCAS_NFT_TABLE})"
     echo -e "  • Правила UFW, открытые скриптом (443/tcp, 1080/tcp)"
     echo -e "  • Правку net.ipv4.ip_unprivileged_port_start в /etc/sysctl.conf"
     echo
@@ -1443,7 +1537,16 @@ uninstall_everything() {
     docker builder prune -f &>/dev/null || true
     ok "Docker-кэш очищен"
 
-    # ── 4. Откат правил UFW ──────────────────────────────────
+    # ── 4. Удаление SYN-фильтра nftables ─────────────────────
+    hdr "🛡️  Удаление SYN-фильтра nftables"
+    if command -v nft &>/dev/null && nft list table ${AMTCAS_NFT_TABLE} &>/dev/null; then
+        _amtcas_synlimit_remove
+        ok "Таблица nftables ${AMTCAS_NFT_TABLE} удалена"
+    else
+        info "Таблица nftables ${AMTCAS_NFT_TABLE} не найдена — пропускаю"
+    fi
+
+    # ── 5. Откат правил UFW ──────────────────────────────────
     hdr "🔒 Откат правил фаервола"
     if command -v ufw &>/dev/null; then
         ufw delete allow 443/tcp  2>/dev/null || true
@@ -1455,7 +1558,7 @@ uninstall_everything() {
         info "UFW не установлен — пропускаю"
     fi
 
-    # ── 5. Откат sysctl ───────────────────────────────────────
+    # ── 6. Откат sysctl ───────────────────────────────────────
     hdr "⚙️  Откат системных настроек"
     if grep -q "ip_unprivileged_port_start" /etc/sysctl.conf 2>/dev/null; then
         sed -i '/ip_unprivileged_port_start/d' /etc/sysctl.conf
@@ -1465,7 +1568,7 @@ uninstall_everything() {
         info "Правка sysctl не найдена — пропускаю"
     fi
 
-    # ── 6. Удаление конфигов и директорий ────────────────────
+    # ── 7. Удаление конфигов и директорий ────────────────────
     hdr "📁 Удаление директорий с конфигами"
     for dir in ~/mtproxy ~/xray-client ~/xray-server; do
         if [[ -d "$dir" ]]; then
