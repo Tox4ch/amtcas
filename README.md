@@ -18,7 +18,7 @@
 Запуск приёмки нового VPS (имеет смысл прогнать до `amtcas`, пока ещё действует moneyback у хостера):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/scripts/vps-check.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)
 ```
 
 Скрипт проверяет виртуализацию, CPU steal-time, память/OOM, диск через `fio`, полосу, `mtr`, MTU, IPv6, чёрные списки IP, rDNS/порт 25, репутацию IP и TUN/Docker — и выдаёт Markdown + HTML отчёт с вердиктом "оставляем / возвращаем".
