@@ -4,9 +4,24 @@
 >
 > Клиент → 🇷🇺 RU-сервер (telemt) → 🌉 Мост (Xray) → 📨 Telegram
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue?style=flat-square)](https://github.com/Tox4ch/amtcas)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Ubuntu%2024.04%20%7C%20style=flat-square)](#требования)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue?style=flat-square)](https://github.com/Tox4ch/amtcas) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](https://github.com/Tox4ch/amtcas/blob/main/LICENSE) [![Platform](https://img.shields.io/badge/platform-Ubuntu%2024.04%20%7C%20Debian-blue?style=flat-square)](#требования)
+
+---
+
+## 🔗 Скрипты в этом репозитории
+
+| Скрипт | Назначение | Ссылка |
+|---|---|---|
+| **amtcas** (`mtproxy-setup.sh`) | Настройка каскадного MTProxy (RU-сервер + мост, VLESS+Reality) | [mtproxy-setup.sh](https://github.com/Tox4ch/amtcas/blob/main/mtproxy-setup.sh) |
+| **vps-check** (`scripts/vps-check.sh`) | Приёмка нового VPS за первый час — 12 проверок железа, сети и репутации IP | [vps-check.sh](https://github.com/Tox4ch/amtcas/blob/main/scripts/vps-check.sh) |
+
+Запуск приёмки нового VPS (имеет смысл прогнать до `amtcas`, пока ещё действует moneyback у хостера):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/scripts/vps-check.sh)
+```
+
+Скрипт проверяет виртуализацию, CPU steal-time, память/OOM, диск через `fio`, полосу, `mtr`, MTU, IPv6, чёрные списки IP, rDNS/порт 25, репутацию IP и TUN/Docker — и выдаёт Markdown + HTML отчёт с вердиктом "оставляем / возвращаем".
 
 ---
 
@@ -14,17 +29,16 @@
 
 ### Первый запуск (с GitHub)
 
-```bash
+```
 bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh)
 ```
-
 > ⚠️ Используй именно `bash <(curl ...)`, а не `curl ... | bash` — интерактивный ввод работает только с первым вариантом.
 
 ### Последующие запуски
 
 После первого запуска скрипт устанавливается в `/usr/local/bin/amtcas`:
 
-```bash
+```
 amtcas
 ```
 
@@ -77,6 +91,7 @@ amtcas
                            ▼
                    📨 Telegram DC
 ```
+
 ---
 
 ## ✨ Возможности скрипта
@@ -102,14 +117,14 @@ amtcas
 
 Тебе понадобятся **два** VPS:
 
-| | RU-сервер | Сервер-мост |
-|---|---|---|
-| Расположение | Россия или любой с RU-IP | Любая страна за пределами РФ |
-| ОС | Ubuntu 22.04 / Debian 12 | Ubuntu 22.04 / Debian 12 |
-| RAM | от 512 МБ | от 512 МБ |
-| Открытый порт | `443/tcp` входящий | `443/tcp` входящий |
-| Архитектура | amd64 / arm64 | amd64 / arm64 |
-| Доступ | root или sudo | root или sudo |
+|               | RU-сервер                | Сервер-мост                  |
+| ------------- | ------------------------ | ----------------------------- |
+| Расположение  | Россия или любой с RU-IP | Любая страна за пределами РФ |
+| ОС            | Ubuntu 22.04 / Debian 12 | Ubuntu 22.04 / Debian 12     |
+| RAM           | от 512 МБ                | от 512 МБ                     |
+| Открытый порт | `443/tcp` входящий       | `443/tcp` входящий             |
+| Архитектура   | amd64 / arm64            | amd64 / arm64                  |
+| Доступ        | root или sudo            | root или sudo                  |
 
 > 💡 Сервер-мост необязательно должен быть в Германии — подойдёт любой VPS в Европе, США, Финляндии и т.д. с прямым доступом к Telegram.
 
@@ -125,10 +140,12 @@ amtcas
 Зайди по SSH на **сервер-мост** и запусти скрипт. Меню автоматически определит, что сервер ещё не настроен, и покажет пункт настройки моста.
 
 Скрипт запросит:
+
 - Порт, SNI-домен для камуфляжа, Short ID
 - **Транспорт** — TCP/RAW, gRPC или xHTTP (для gRPC/xHTTP дополнительно спросит `serviceName`/`path`)
 
 И автоматически:
+
 - Сгенерирует X25519 ключевую пару и UUID
 - Создаст конфиг Xray VLESS+Reality под выбранный транспорт
 - Запустит контейнер
@@ -144,7 +161,6 @@ Short ID:     abcd1234
 SNI:          www.google.com
 Транспорт:    tcp
 ```
-
 > ⚠️ Если выбран gRPC или xHTTP, в сводке появится ещё и `serviceName`/`path` — его тоже нужно скопировать один в один.
 
 ### Шаг 2 — Настроить RU-сервер
@@ -152,6 +168,7 @@ SNI:          www.google.com
 Зайди по SSH на **RU-сервер** и запусти скрипт. Меню снова определит роль сервера и покажет пункт настройки RU.
 
 Скрипт запросит данные из Шага 1, **включая транспорт и его параметр — они обязаны совпадать с мостом**, и автоматически:
+
 - Пропишет `sysctl` для бинда на порт 443
 - Создаст конфиг Xray-клиента (SOCKS5 → VLESS) под выбранный транспорт
 - Создаст конфиг telemt (MTProxy → SOCKS5)
@@ -164,6 +181,7 @@ SNI:          www.google.com
 ### Шаг 3 — Подключить клиент
 
 Скопируй ссылку вида:
+
 ```
 tg://proxy?server=RU_IP&port=443&secret=ee...
 ```
@@ -174,11 +192,11 @@ tg://proxy?server=RU_IP&port=443&secret=ee...
 
 ## 🚚 Транспорты VLESS+Reality
 
-| Транспорт | Flow (XTLS Vision) | Особенности |
-|---|---|---|
-| **TCP/RAW** | ✅ поддерживается | Максимальная скорость, вариант по умолчанию |
-| **gRPC** | ❌ не поддерживается | Мультиплексирует запросы в один HTTP/2-поток, устойчивее к параллельным подключениям |
-| **xHTTP** | ❌ не поддерживается | Маскируется под обычный HTTP-трафик, часто лучше проходит DPI |
+| Транспорт   | Flow (XTLS Vision)  | Особенности                                                                          |
+| ----------- | -------------------- | -------------------------------------------------------------------------------------- |
+| **TCP/RAW** | ✅ поддерживается    | Максимальная скорость, вариант по умолчанию                                            |
+| **gRPC**    | ❌ не поддерживается | Мультиплексирует запросы в один HTTP/2-поток, устойчивее к параллельным подключениям   |
+| **xHTTP**   | ❌ не поддерживается | Маскируется под обычный HTTP-трафик, часто лучше проходит DPI                          |
 
 > 💡 Если сервисы вроде telemt открывают много параллельных TCP+TLS хендшейков одновременно (например, периодическая проверка связности с DC), REALITY на чистом TCP иногда отбрасывает часть из них (`failed to read client hello`). gRPC или xHTTP решают это за счёт мультиплексирования на уровне транспорта.
 
@@ -190,7 +208,7 @@ tg://proxy?server=RU_IP&port=443&secret=ee...
 
 ### Управление сервисами
 
-```bash
+```
 # Статус всех контейнеров
 docker ps
 
@@ -217,7 +235,7 @@ docker compose pull && docker compose up -d
 
 ### Проверка туннеля
 
-```bash
+```
 # Должен вернуть IP сервера-моста, а не RU (резолв DNS через сам туннель)
 curl --socks5-hostname 127.0.0.1:1080 https://ifconfig.me
 
@@ -227,7 +245,7 @@ ncat --proxy 127.0.0.1:1080 --proxy-type socks5 -zv 149.154.167.50 443
 
 ### Управление пользователями telemt
 
-```bash
+```
 # Получить все ссылки через API
 curl -s http://127.0.0.1:9091/v1/users | jq -r '.data[].links.tls[0]'
 
@@ -236,11 +254,13 @@ openssl rand -hex 16
 ```
 
 Добавить пользователя в `~/mtproxy/telemt.toml`:
-```toml
+
+```
 [access.users]
 user1 = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 user2 = "00112233445566778899aabbccddeeff"
 ```
+
 Конфиг подхватывается **без перезапуска**.
 
 ---
@@ -251,21 +271,21 @@ user2 = "00112233445566778899aabbccddeeff"
 
 Добавь A-запись в DNS (`proxy.example.com → RU_IP`), затем в `telemt.toml`:
 
-```toml
+```
 [general.links]
 public_host = "proxy.example.com"
 ```
 
 ### Ограничение числа подключений на пользователя
 
-```toml
+```
 [access.user_max_unique_ips]
 myuser = 3   # Максимум 3 уникальных IP одновременно
 ```
 
 ### Метрики (Prometheus)
 
-```toml
+```
 [server]
 metrics_port = 9090
 metrics_whitelist = ["127.0.0.1/32"]
@@ -275,7 +295,7 @@ metrics_whitelist = ["127.0.0.1/32"]
 
 ### Лимит соединений
 
-```toml
+```
 [server]
 max_connections = 10000   # 0 = без лимита
 ```
@@ -285,7 +305,13 @@ max_connections = 10000   # 0 = без лимита
 ## 🗂️ Структура файлов после установки
 
 ```
-RU-сервер:
+Репозиторий:
+├── README.md
+├── mtproxy-setup.sh            ← установщик amtcas
+└── scripts/
+    └── vps-check.sh            ← приёмка нового VPS (12 проверок)
+
+RU-сервер (после установки):
 ├── /usr/local/bin/amtcas       ← глобальная команда
 │
 ├── ~/xray-client/
@@ -296,7 +322,7 @@ RU-сервер:
     ├── telemt.toml             ← MTProxy, upstream: socks5://127.0.0.1:1080
     └── docker-compose.yml
 
-Сервер-мост:
+Сервер-мост (после установки):
 └── ~/xray-server/
     ├── config.json             ← VLESS+Reality inbound :443
     ├── .transport               ← сохранённый транспорт и его параметр
@@ -307,11 +333,11 @@ RU-сервер:
 
 ## 🔌 Таблица портов
 
-| Сервер | Сервис | Адрес | Открыт наружу |
-|---|---|---|---|
-| RU | telemt MTProxy | `0.0.0.0:443/tcp` | ✅ для клиентов Telegram |
-| RU | Xray SOCKS5 | `127.0.0.1:1080/tcp` | ❌ только localhost |
-| Мост | Xray VLESS+Reality | `0.0.0.0:443/tcp` | ✅ для RU-сервера |
+| Сервер | Сервис             | Адрес                | Открыт наружу           |
+| ------ | ------------------- | ---------------------- | ------------------------- |
+| RU     | telemt MTProxy      | `0.0.0.0:443/tcp`     | ✅ для клиентов Telegram |
+| RU     | Xray SOCKS5         | `127.0.0.1:1080/tcp`  | ❌ только localhost      |
+| Мост   | Xray VLESS+Reality  | `0.0.0.0:443/tcp`     | ✅ для RU-сервера         |
 
 ---
 
@@ -321,7 +347,8 @@ RU-сервер:
 Если обновление доступно — покажет уведомление и предложит обновиться одним нажатием.
 
 Обновить вручную:
-```bash
+
+```
 bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh)
 ```
 
@@ -335,18 +362,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-s
 
 ## 🐛 Диагностика
 
-| Симптом | Вероятная причина | Решение |
-|---|---|---|
-| `curl --socks5-hostname ifconfig.me` возвращает RU IP | Xray-клиент не подключился к мосту | `cd ~/xray-client && docker compose logs` |
-| `received real certificate (MITM)` | В `address` указан домен вместо IP | Поставить реальный IP моста |
-| `received real certificate (MITM)` при правильном IP | Перепутаны private/public ключи | Перегенерировать, `privateKey` — на мосту, `publicKey` — на RU |
-| `Permission denied` при бинде на 443 | Non-root контейнер | `sysctl -w net.ipv4.ip_unprivileged_port_start=443` |
-| telemt не видит `127.0.0.1:1080` | Нет `network_mode: host` | Проверить оба `docker-compose.yml` на RU |
-| `bind: address already in use` | Порт 443 занят | `ss -tlnp \| grep 443` |
-| `unknown command` при запуске Xray | Дублирование команды | `command: ["run", ...]` без `xray` в начале |
+| Симптом                                                                                                           | Вероятная причина                                                                                          | Решение                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `curl --socks5-hostname ifconfig.me` возвращает RU IP                                                             | Xray-клиент не подключился к мосту                                                                         | `cd ~/xray-client && docker compose logs`                                                                                               |
+| `received real certificate (MITM)`                                                                                | В `address` указан домен вместо IP                                                                         | Поставить реальный IP моста                                                                                                             |
+| `received real certificate (MITM)` при правильном IP                                                              | Перепутаны private/public ключи                                                                            | Перегенерировать, `privateKey` — на мосту, `publicKey` — на RU                                                                          |
+| `Permission denied` при бинде на 443                                                                              | Non-root контейнер                                                                                         | `sysctl -w net.ipv4.ip_unprivileged_port_start=443`                                                                                     |
+| telemt не видит `127.0.0.1:1080`                                                                                  | Нет `network_mode: host`                                                                                   | Проверить оба `docker-compose.yml` на RU                                                                                                |
+| `bind: address already in use`                                                                                    | Порт 443 занят                                                                                             | `ss -tlnp \| grep 443`                                                                                                                   |
+| `unknown command` при запуске Xray                                                                                | Дублирование команды                                                                                       | `command: ["run", ...]` без `xray` в начале                                                                                             |
 | На мосту `REALITY: processed invalid connection: failed to read client hello` при пачках параллельных подключений | Много одновременных TCP+TLS хендшейков на чистом TCP-транспорте (например DC-connectivity проверки telemt) | Перенастроить оба сервера на транспорт **gRPC** или **xHTTP** — они мультиплексируют трафик в один поток вместо параллельных хендшейков |
-| `account ... is rejected since the client flow is empty` | На одной стороне задан `flow: xtls-rprx-vision`, на другой — нет (несовпадение при смене транспорта) | `flow` должен быть либо на обеих сторонах при TCP, либо отсутствовать на обеих при gRPC/xHTTP |
-| `Telegram handshake timeout` в логах telemt при рабочем TLS и рабочем туннеле | Может быть блокировка DPI на стороне мобильного оператора клиента (не сервера) | Проверить тот же `tg://` линк с другой сети/провайдера или через десктопный клиент |
+| `account ... is rejected since the client flow is empty`                                                          | На одной стороне задан `flow: xtls-rprx-vision`, на другой — нет (несовпадение при смене транспорта)       | `flow` должен быть либо на обеих сторонах при TCP, либо отсутствовать на обеих при gRPC/xHTTP                                           |
+| `Telegram handshake timeout` в логах telemt при рабочем TLS и рабочем туннеле                                     | Может быть блокировка DPI на стороне мобильного оператора клиента (не сервера)                             | Проверить тот же `tg://` линк с другой сети/провайдера или через десктопный клиент                                                      |
 
 ---
 
@@ -356,6 +383,4 @@ MIT — используй свободно, модифицируй, распр�
 
 ---
 
-<div align="center">
-  <sub>Построено на базе <a href="https://github.com/telemt/telemt">telemt</a> и <a href="https://github.com/XTLS/Xray-core">Xray-core</a></sub>
-</div>
+Построено на базе [telemt](https://github.com/telemt/telemt) и [Xray-core](https://github.com/XTLS/Xray-core)
