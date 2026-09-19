@@ -25,6 +25,44 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check
 
 ---
 
+### Флаги vps-check.sh
+
+| Флаг | Значение | По умолчанию |
+|---|---|---|
+| `--home-ip <IP>` | Домашний/рабочий IP для теста `mtr` (проверка 6). Без флага mtr идёт до `1.1.1.1` | не задан |
+| `--skip-fio` | Пропустить тест диска (проверка 4) — экономит ~30 сек | выключен |
+| `--skip-speed` | Пропустить speedtest (проверка 5) — экономит ~1 мин | выключен |
+| `--fio-runtime <SEC>` | Длительность каждого из двух fio-тестов (read/write) в секундах | `15` |
+
+**Примеры:**
+
+Обычный полный прогон:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)
+```
+
+С указанием домашнего IP, чтобы `mtr` показал реальную задержку до тебя, а не до 1.1.1.1:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh) --home-ip 203.0.113.42
+```
+
+Быстрая проверка без диска и без speedtest (когда важна только сеть и репутация IP):
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh) --skip-fio --skip-speed
+```
+
+Более долгий и точный тест диска (30 секунд на чтение и 30 на запись вместо 15):
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh) --fio-runtime 30
+```
+
+Комбинация — свой IP для mtr + увеличенный fio:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh) --home-ip 203.0.113.42 --fio-runtime 30
+```
+
+> Если скачал скрипт локально, флаги передаются так же: `bash vps-check.sh --home-ip 203.0.113.42`
+
 ## 🚀 Быстрый старт
 
 ### Первый запуск (с GitHub)
