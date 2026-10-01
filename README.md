@@ -12,12 +12,16 @@
 
 | Скрипт | Описание |
 | ------ | -------- |
+| [🩺 `vps-check.sh`](#-vps-checksh) | Приёмка нового VPS: 12 проверок железа, сети и репутации IP |
 | [🔐 `firststep.sh`](#-firststepsh) | Добавляет SSH-ключ и отключает вход по паролю |
 | [🌉 `mtproxy-setup.sh`](#-mtproxy-setupsh) | Приватный Telegram MTProxy с туннелем VLESS+Reality |
 
 **Быстрый запуск:**
 
 ```bash
+# 🩺 Проверка нового VPS
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)
+
 # 🔐 Первичная защита сервера
 sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)
 
@@ -26,6 +30,29 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-s
 ```
 
 > ⚠️ Запускай через `bash <(curl ...)`, а не `curl ... | bash`: так работает интерактивный ввод.
+
+---
+
+## 🩺 vps-check.sh
+
+**Что делает.** Проверяет свежий VPS за первый час: стоит ли обживать сервер или лучше сразу просить замену или возврат. Выводит цветной отчёт и итоговый вердикт.
+
+**Быстрый запуск.**
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)
+```
+
+Опции: `--home-ip IP` (замер маршрута до дома), `--skip-fio`, `--skip-speed`, `--fio-runtime СЕК`.
+
+**Как работает.** 12 проверок в четыре этапа:
+
+1. **Железо:** тип виртуализации, steal time CPU, память и OOM, скорость диска (`fio`).
+2. **Сеть:** пропускная способность, маршруты (`mtr`), MTU, IPv6.
+3. **Репутация IP:** чёрные списки DNSBL, rDNS и порт 25, провайдер и тип диапазона.
+4. **Пригодность:** TUN, Docker, nested-виртуализация.
+
+Каждая проверка получает статус OK / WARN / FAIL, в конце выводится сводка и вердикт. Недостающие утилиты скрипт ставит сам, файлы на диске не оставляет.
 
 ---
 
