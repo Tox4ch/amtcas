@@ -18,14 +18,21 @@
 
 **Быстрый запуск:**
 
+🩺 Проверка нового VPS
+
 ```bash
-# 🩺 Проверка нового VPS
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)"
+```
 
-# 🔐 Первичная защита сервера
+🔐 Первичная защита сервера
+
+```bash
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)"
+```
 
-# 🌉 Каскадный MTProxy
+🌉 Каскадный MTProxy
+
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh)
 ```
 
