@@ -20,16 +20,17 @@
 
 ```bash
 # 🩺 Проверка нового VPS
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)"
 
 # 🔐 Первичная защита сервера
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)"
 
 # 🌉 Каскадный MTProxy
 bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh)
 ```
 
-> ⚠️ Запускай через `bash <(curl ...)`, а не `curl ... | bash`: так работает интерактивный ввод.
+> ⚠️ Запускай через `bash -c "$(curl ...)"` или `bash <(curl ...)`, а не `curl ... | bash`: так работает интерактивный ввод.
+> `sudo bash <(curl ...)` не сработает: sudo закрывает дескриптор `/dev/fd/*`.
 
 ---
 
@@ -40,10 +41,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-s
 **Быстрый запуск.**
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)"
 ```
 
-Опции: `--home-ip IP` (замер маршрута до дома), `--skip-fio`, `--skip-speed`, `--fio-runtime СЕК`.
+Опции: `--home-ip IP` (замер маршрута до дома), `--skip-fio`, `--skip-speed`, `--fio-runtime СЕК`. Передаются после `_`:
+`sudo bash -c "$(curl -fsSL ...)" _ --skip-fio`
 
 **Как работает.** 12 проверок в четыре этапа:
 
@@ -63,7 +65,7 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-
 **Быстрый запуск.**
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)"
 ```
 
 **Как работает.**
