@@ -2,6 +2,7 @@
 #
 # firststep.sh — первый шаг после выдачи VPS:
 #   • добавляет публичный SSH-ключ
+#   • позволяет удалить выбранный ключ
 #   • отключает вход по паролю
 # Можно запускать повторно: скрипт покажет уже добавленные ключи.
 #
@@ -59,26 +60,169 @@ ask_yn() {
 }
 
 # ---------- ключи ----------
+# load_keys файл — разбирает authorized_keys построчно и заполняет массивы:
+#   KEY_LNUM — номер строки в файле (по нему удаляем)
+#   KEY_FP / KEY_TYPE / KEY_COMMENT — отпечаток, тип, комментарий
+# Комментарии, пустые и битые строки пропускаются и в нумерацию не попадают.
 KEY_COUNT=0
-list_keys() {
-    local f="$1" out line bits fp rest type comment i=0
-    KEY_COUNT=0
+KEY_LNUM=(); KEY_FP=(); KEY_TYPE=(); KEY_COMMENT=()
+
+load_keys() {
+    local f="$1" line out fp rest type comment tmp n=0
+    KEY_COUNT=0; KEY_LNUM=(); KEY_FP=(); KEY_TYPE=(); KEY_COMMENT=()
     [[ -s "$f" ]] || return 0
-    out="$(ssh-keygen -l -f "$f" 2>/dev/null || true)"
-    [[ -n "$out" ]] || return 0
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        i=$((i+1))
-        read -r bits fp rest <<<"$line"
+    tmp="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n+1))
+        line="${line%$'\r'}"
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        printf '%s\n' "$line" > "$tmp"
+        out="$(ssh-keygen -l -f "$tmp" 2>/dev/null | head -n1 || true)"
+        [[ -n "$out" ]] || continue
+        read -r _ fp rest <<<"$out"
         type="${rest##* }"; type="${type//[()]/}"
         if [[ "$rest" == *" "* ]]; then comment="${rest% *}"; else comment=""; fi
+        KEY_LNUM+=("$n"); KEY_FP+=("$fp"); KEY_TYPE+=("$type"); KEY_COMMENT+=("$comment")
+    done < "$f"
+    rm -f "$tmp"
+    KEY_COUNT=${#KEY_FP[@]}
+}
+
+print_keys() {
+    local i
+    [[ $KEY_COUNT -gt 0 ]] || return 0
+    for ((i=0; i<KEY_COUNT; i++)); do
         printf ' %s%d)%s %s%-8s%s %s%s%s  %s\n' \
-            "$GRN" "$i" "$RST" "$BLD" "$type" "$RST" "$GRY" "$fp" "$RST" "$comment"
-    done <<<"$out"
-    KEY_COUNT=$i
+            "$GRN" "$((i+1))" "$RST" "$BLD" "${KEY_TYPE[$i]}" "$RST" \
+            "$GRY" "${KEY_FP[$i]}" "$RST" "${KEY_COMMENT[$i]}"
+    done
+}
+
+key_exists() {
+    local i
+    for ((i=0; i<KEY_COUNT; i++)); do
+        [[ "${KEY_FP[$i]}" == "$1" ]] && return 0
+    done
+    return 1
 }
 
 pw_state() { { sshd -T 2>/dev/null || true; } | awk '/^passwordauthentication /{print $2}'; }
+
+# add_key — запрашивает и добавляет публичный ключ (использует $target_user, $auth_file и т.д.)
+add_key() {
+    local pubkey tmp new_fp
+    section "Новый ключ"
+    echo " Вставьте публичный ключ одной строкой ${GRY}(ssh-ed25519 AAAA... / ssh-rsa AAAA...)${RST}"
+    printf ' %s>%s ' "$CYN" "$RST"
+    IFS= read -r pubkey </dev/tty
+    pubkey="$(clean_line "${pubkey:-}")"
+
+    if [[ -z "$pubkey" ]]; then
+        warn "Пустой ввод. Ничего не изменено."; return 1
+    fi
+    if [[ "$pubkey" == -----BEGIN* ]]; then
+        err "Это приватный ключ! Нужен публичный (файл .pub). Ничего не изменено."; return 1
+    fi
+
+    tmp="$(mktemp)"
+    echo "$pubkey" > "$tmp"
+    if ! ssh-keygen -l -f "$tmp" &>/dev/null; then
+        rm -f "$tmp"
+        err "Это не похоже на корректный публичный SSH-ключ. Ничего не изменено."; return 1
+    fi
+    new_fp="$(ssh-keygen -l -f "$tmp" | awk '{print $2}')"
+    ok "Ключ распознан: ${GRY}$(ssh-keygen -l -f "$tmp")${RST}"
+    rm -f "$tmp"
+
+    load_keys "$auth_file"
+    if key_exists "$new_fp"; then
+        info "Такой ключ уже добавлен, пропускаю."
+        return 0
+    fi
+
+    install -d -m 700 -o "$target_user" -g "$group" "$ssh_dir"
+    chmod 700 "$ssh_dir"
+    touch "$auth_file"
+    # гарантируем перевод строки в конце файла перед добавлением
+    if [[ -s "$auth_file" && -n "$(tail -c1 "$auth_file")" ]]; then echo >> "$auth_file"; fi
+    echo "$pubkey" >> "$auth_file"
+    chown "$target_user:$group" "$auth_file"
+    chmod 600 "$auth_file"
+    command -v restorecon &>/dev/null && restorecon -R "$ssh_dir" || true
+    ok "Ключ добавлен в $auth_file"
+    return 0
+}
+
+# delete_key — показывает ключи, удаляет выбранный (по номеру строки в файле)
+delete_key() {
+    local sel idx fp n tmp backup i
+    load_keys "$auth_file"
+    if [[ $KEY_COUNT -eq 0 ]]; then
+        warn "Удалять нечего: ключей нет."
+        return 0
+    fi
+
+    section "Удаление ключа"
+    print_keys
+    echo
+    flush_tty
+    printf ' Номер ключа для удаления %s[Enter — отмена]%s: ' "$GRY" "$RST"
+    IFS= read -r sel </dev/tty || return 0
+    sel="$(clean_line "${sel:-}")"
+    if [[ -z "$sel" ]]; then info "Отменено."; return 0; fi
+    if ! [[ "$sel" =~ ^[0-9]+$ ]] || (( 10#$sel < 1 || 10#$sel > KEY_COUNT )); then
+        warn "Нет ключа с номером «$sel»."
+        return 0
+    fi
+    idx=$((10#$sel - 1))
+    fp="${KEY_FP[$idx]}"
+    n="${KEY_LNUM[$idx]}"
+
+    # защита от потери доступа
+    if [[ $KEY_COUNT -eq 1 ]]; then
+        if [[ "$(pw_state)" == "no" ]]; then
+            err "Это последний ключ, а вход по паролю отключён: после удаления доступ к серверу будет потерян."
+            err "Сначала добавьте другой ключ. Ничего не изменено."
+            return 0
+        fi
+        warn "Это ${BLD}последний${RST} ключ пользователя $target_user."
+    fi
+
+    echo
+    echo " Будет удалён: ${BLD}${KEY_TYPE[$idx]}${RST} ${GRY}$fp${RST} ${KEY_COMMENT[$idx]}"
+    warn "Новые входы по этому ключу станут невозможны (уже открытые сессии не закроются)."
+    if ! ask_yn "Удалить этот ключ?" n; then
+        info "Отменено."
+        return 0
+    fi
+
+    # убеждаемся, что на этой строке всё ещё тот же ключ (файл могли изменить)
+    tmp="$(mktemp)"
+    sed -n "${n}p" "$auth_file" > "$tmp"
+    if [[ "$(ssh-keygen -l -f "$tmp" 2>/dev/null | awk '{print $2}')" != "$fp" ]]; then
+        rm -f "$tmp"
+        err "Файл $auth_file изменился, пока вы выбирали. Ничего не удалено, повторите."
+        return 0
+    fi
+
+    backup="/root/authorized_keys.${target_user}.backup.$(date +%Y%m%d-%H%M%S)"
+    cp -a "$auth_file" "$backup"
+    chmod 600 "$backup"
+
+    awk -v n="$n" 'NR != n' "$auth_file" > "$tmp"
+    cat "$tmp" > "$auth_file"   # перезаписываем содержимое: владелец, права и SELinux-контекст сохраняются
+    rm -f "$tmp"
+    ok "Ключ удалён. Резервная копия: $backup"
+
+    load_keys "$auth_file"
+    for ((i=0; i<KEY_COUNT; i++)); do
+        if [[ "${KEY_FP[$i]}" == "$fp" ]]; then
+            warn "Этот же ключ есть в файле в другой строке (№$((i+1))) и продолжает работать. Удалите и её."
+        fi
+    done
+    return 0
+}
 
 # =====================================================================
 [[ $EUID -eq 0 ]] || die "Запустите от root или через sudo."
@@ -92,7 +236,7 @@ echo "${RST}"
 # --- 1. Пользователь ---
 section "Пользователь"
 default_user="${SUDO_USER:-root}"
-printf ' Для какого пользователя добавить ключ? %s[%s]%s: ' "$GRY" "$default_user" "$RST"
+printf ' Для какого пользователя управлять ключами? %s[%s]%s: ' "$GRY" "$default_user" "$RST"
 IFS= read -r target_user </dev/tty
 target_user="$(clean_line "${target_user:-}")"
 target_user="${target_user:-$default_user}"
@@ -112,56 +256,41 @@ case "$pw_before" in
     *)   info "Вход по паролю: не удалось определить" ;;
 esac
 
+# --- 3. Управление ключами ---
 echo
 echo " ${BLD}Ключи в $auth_file:${RST}"
-list_keys "$auth_file"
+load_keys "$auth_file"
 if [[ $KEY_COUNT -eq 0 ]]; then
     info "Ключей пока нет."
-    add_key=1
+    add_key || true
 else
-    echo
-    if ask_yn "Добавить ещё один ключ?" n; then add_key=1; else add_key=0; fi
-fi
-
-# --- 3. Добавление ключа ---
-if [[ $add_key -eq 1 ]]; then
-    section "Новый ключ"
-    echo " Вставьте публичный ключ одной строкой ${GRY}(ssh-ed25519 AAAA... / ssh-rsa AAAA...)${RST}"
-    printf ' %s>%s ' "$CYN" "$RST"
-    IFS= read -r pubkey </dev/tty
-    pubkey="$(clean_line "${pubkey:-}")"
-
-    [[ -n "$pubkey" ]] || die "Пустой ввод. Ничего не изменено."
-    [[ "$pubkey" == -----BEGIN* ]] && die "Это приватный ключ! Нужен публичный (файл .pub). Ничего не изменено."
-
-    tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
-    echo "$pubkey" > "$tmp"
-    ssh-keygen -l -f "$tmp" &>/dev/null || die "Это не похоже на корректный публичный SSH-ключ. Ничего не изменено."
-    new_fp="$(ssh-keygen -l -f "$tmp" | awk '{print $2}')"
-    ok "Ключ распознан: ${GRY}$(ssh-keygen -l -f "$tmp")${RST}"
-
-    existing_fps=""
-    [[ -s "$auth_file" ]] && existing_fps="$(ssh-keygen -l -f "$auth_file" 2>/dev/null | awk '{print $2}' || true)"
-
-    if grep -qxF "$new_fp" <<<"$existing_fps"; then
-        info "Такой ключ уже добавлен, пропускаю."
-    else
-        install -d -m 700 -o "$target_user" -g "$group" "$ssh_dir"
-        chmod 700 "$ssh_dir"
-        touch "$auth_file"
-        # гарантируем перевод строки в конце файла перед добавлением
-        [[ -s "$auth_file" && -n "$(tail -c1 "$auth_file")" ]] && echo >> "$auth_file"
-        echo "$pubkey" >> "$auth_file"
-        chown "$target_user:$group" "$auth_file"
-        chmod 600 "$auth_file"
-        command -v restorecon &>/dev/null && restorecon -R "$ssh_dir" || true
-        ok "Ключ добавлен в $auth_file"
-    fi
+    print_keys
+    while true; do
+        echo
+        echo " ${BLD}Действие:${RST}"
+        echo "   ${GRN}1)${RST} Продолжить без изменений"
+        echo "   ${GRN}2)${RST} Добавить ключ"
+        echo "   ${GRN}3)${RST} Удалить ключ"
+        flush_tty
+        printf ' Выбор %s[1]%s: ' "$GRY" "$RST"
+        IFS= read -r choice </dev/tty || break
+        choice="$(clean_line "${choice:-}")"
+        case "${choice:-1}" in
+            1) break ;;
+            2) add_key || true ;;
+            3) delete_key || true ;;
+            *) warn "Введите 1, 2 или 3."; continue ;;
+        esac
+        load_keys "$auth_file"
+        echo
+        echo " ${BLD}Ключи в $auth_file:${RST}"
+        if [[ $KEY_COUNT -eq 0 ]]; then info "Ключей не осталось."; else print_keys; fi
+    done
 fi
 
 # --- 4. Вход по паролю ---
 section "Вход по паролю"
-list_keys "$auth_file" >/dev/null
+load_keys "$auth_file"
 [[ $KEY_COUNT -gt 0 ]] || die "У '$target_user' нет ни одного ключа: отключать пароль нельзя, потеряете доступ."
 
 if [[ "$pw_before" == "no" ]]; then
