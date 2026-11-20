@@ -38,7 +38,7 @@ ask_secret() { local a; read -rsp "$1: " a; echo >&2; printf '%s' "$a"; }
 
 save_report() {
   local name="$1" host; host=$(hostname 2>/dev/null || echo unknown)
-  local stamp; stamp=$(date +%Y-%m-%d_%H-%M)
+  local stamp; stamp=$(date +%Y-%m-%d_%H-%M-%S)
   mkdir -p reports
   local f="reports/${host}-${name}-${stamp}.md"
   {
@@ -99,9 +99,13 @@ check_firewall() {
     warn "Docker публикует $NODE_PORT на 0.0.0.0 — ufw не фильтрует Docker-порты (нужен DOCKER-USER или файрвол хостера)"
   fi
   if have nft; then
-    nft list ruleset 2>/dev/null | grep -qE "dport ${NODE_PORT}\b" \
-      && ok "nftables: правило для $NODE_PORT есть" \
-      || warn "nftables: правила для $NODE_PORT нет"
+    if nft list ruleset 2>/dev/null | grep -qE "dport ${NODE_PORT}\b"; then
+      ok "nftables: правило для $NODE_PORT есть"
+    elif have ufw && ufw status 2>/dev/null | grep -q "^Status: active"; then
+      info "nftables: отдельного правила нет, ufw активен"
+    else
+      warn "nftables: правила для $NODE_PORT нет"
+    fi
   fi
 }
 
@@ -167,12 +171,23 @@ fix_ufw() {
   line ""
   line "${C_WARN}Исправление: firewall${C_RST}"
   [ -n "$PANEL_IP" ] || { warn "IP панели не задан — пропуск"; return 0; }
-  line "Правила: 22/80/443 открыты, порт $NODE_PORT — только с $PANEL_IP, default deny incoming."
-  line "${C_FAIL}Внимание:${C_RST} если SSH на нестандартном порту — сначала добавьте его, иначе потеряете доступ."
+  if ! have ufw; then
+    local u; u=$(ask "ufw не установлен. Установить ufw? (y/N)" "N")
+    [ "$u" = "y" ] || return 0
+    if have apt-get; then
+      apt-get update -qq >/dev/null 2>&1
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ufw >/dev/null 2>&1
+    fi
+    have ufw || { fail "Не удалось установить ufw"; return 0; }
+    ok "ufw установлен"
+  fi
+  local ssh_port; ssh_port=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+  ssh_port="${ssh_port:-22}"
+  line "Правила: ${ssh_port}/80/443 открыты, порт $NODE_PORT — только с $PANEL_IP, default deny incoming."
+  line "${C_FAIL}Внимание:${C_RST} проверьте, что SSH-порт определён верно (${ssh_port}), иначе потеряете доступ."
   local a; a=$(ask "Применить правила ufw? (y/N)" "N")
   [ "$a" = "y" ] || return 0
-  have ufw || { warn "ufw не установлен — установите вручную"; return 0; }
-  ufw allow 22/tcp >/dev/null 2>&1
+  ufw allow "${ssh_port}/tcp" >/dev/null 2>&1
   ufw allow 80/tcp >/dev/null 2>&1
   ufw allow 443/tcp >/dev/null 2>&1
   ufw allow from "$PANEL_IP" to any port "$NODE_PORT" proto tcp comment 'remnanode: только панель' >/dev/null 2>&1
@@ -181,6 +196,28 @@ fix_ufw() {
   ok "ufw настроен (порт $NODE_PORT — только $PANEL_IP)"
   warn "Проверьте снаружи: Docker-порты ufw не фильтрует. Если порт доступен — нужен DOCKER-USER или файрвол хостера."
   NEED_UFW=0
+}
+
+fix_hsts() {
+  line ""
+  line "${C_WARN}Исправление: HSTS в Caddyfile${C_RST}"
+  local cf=/opt/caddy/Caddyfile
+  [ -f "$cf" ] || { warn "Caddyfile не найден в /opt/caddy — добавьте HSTS вручную"; return 0; }
+  if grep -q 'Strict-Transport-Security' "$cf"; then ok "HSTS уже есть в Caddyfile"; NEED_HSTS=0; return 0; fi
+  line "Будет добавлено в блок https: header Strict-Transport-Security \"max-age=31536000; includeSubDomains\""
+  local a; a=$(ask "Добавить HSTS и перезапустить Caddy? (y/N)" "N")
+  [ "$a" = "y" ] || return 0
+  cp "$cf" "${cf}.bak.$(date +%s)"
+  awk '{print} !done && /^https:\/\// {print "\theader Strict-Transport-Security \"max-age=31536000; includeSubDomains\""; done=1}' "$cf" > "${cf}.new" \
+    && mv "${cf}.new" "$cf"
+  local ct; ct=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 caddy || true)
+  if [ -n "$ct" ] && docker exec "$ct" caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+    docker restart "$ct" >/dev/null 2>&1
+    ok "HSTS добавлен, $ct перезапущен"
+    NEED_HSTS=0
+  else
+    warn "caddy validate не прошёл — проверьте Caddyfile (бэкап рядом)"
+  fi
 }
 
 fix_ssh() {
@@ -214,13 +251,12 @@ node_fix() {
   [ "$NEED_MPTCP" = 1 ] && fix_mptcp
   [ "$NEED_UFW" = 1 ] && fix_ufw
   [ "$NEED_SSH" = 1 ] && fix_ssh
-  if [ "$NEED_301" = 1 ] || [ "$NEED_HSTS" = 1 ]; then
+  [ "$NEED_HSTS" = 1 ] && fix_hsts
+  if [ "$NEED_301" = 1 ]; then
     line ""
-    line "${C_INFO}Подсказка по Caddyfile${C_RST} (/opt/caddy/Caddyfile):"
-    line "  в блоке https://<домен> добавьте:"
-    line "    tls { protocols tls1.2 tls1.3 }"
-    line '    header Strict-Transport-Security "max-age=31536000; includeSubDomains"'
-    line "  затем: docker restart caddy-selfsteal  (или selfsteal restart)"
+    line "${C_INFO}Подсказка по 301:${C_RST} в /opt/caddy/Caddyfile блок http:// должен содержать:"
+    line "    redir https://{host}{uri} permanent"
+    line "  затем: docker restart caddy-selfsteal"
   fi
   line ""
   local a; a=$(ask "Прогнать проверку повторно? (y/N)" "Y")
