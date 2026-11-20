@@ -15,25 +15,22 @@
 | [🩺 `vps-check.sh`](#-vps-checksh) | Приёмка нового VPS: 12 проверок железа, сети и репутации IP |
 | [🔐 `firststep.sh`](#-firststepsh) | Добавляет SSH-ключ и отключает вход по паролю |
 | [🌉 `mtproxy-setup.sh`](#-mtproxy-setupsh) | Приватный Telegram MTProxy с туннелем VLESS+Reality |
+| [🛡 `remnawave-audit.sh`](#-remnawave-auditsh) | Аудит ноды/панели Remnawave: проверка и безопасные исправления |
 
 **Быстрый запуск:**
 
-🩺 Проверка нового VPS
-
 ```bash
+# vps-check — приёмка VPS
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)"
-```
 
-🔐 Первичная защита сервера
-
-```bash
+# firststep — SSH-ключ и отключение паролей
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)"
-```
 
-🌉 Каскадный MTProxy
-
-```bash
+# mtproxy-setup — каскадный MTProxy
 bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh)
+
+# remnawave-audit — аудит Remnawave
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/remnawave-audit.sh)"
 ```
 
 > ⚠️ Запускай через `bash -c "$(curl ...)"` или `bash <(curl ...)`, а не `curl ... | bash`: так работает интерактивный ввод.
@@ -43,7 +40,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-s
 
 ## 🩺 vps-check.sh
 
-**Что делает.** Проверяет свежий VPS за первый час: стоит ли обживать сервер или лучше сразу просить замену или возврат. Выводит цветной отчёт и итоговый вердикт.
+**Что делает.** Проверяет свежий VPS за первый час: стоит ли обживать сервер или просить замену. Цветной отчёт и вердикт.
 
 **Быстрый запуск.**
 
@@ -51,23 +48,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-s
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/vps-check.sh)"
 ```
 
-Опции: `--home-ip IP` (замер маршрута до дома), `--skip-fio`, `--skip-speed`, `--fio-runtime СЕК`. Передаются после `_`:
+Опции: `--home-ip IP`, `--skip-fio`, `--skip-speed`, `--fio-runtime СЕК` — после `_`:
 `sudo bash -c "$(curl -fsSL ...)" _ --skip-fio`
 
-**Как работает.** 12 проверок в четыре этапа:
-
-1. **Железо:** тип виртуализации, steal time CPU, память и OOM, скорость диска (`fio`).
-2. **Сеть:** пропускная способность, маршруты (`mtr`), MTU, IPv6.
-3. **Репутация IP:** чёрные списки DNSBL, rDNS и порт 25, провайдер и тип диапазона.
-4. **Пригодность:** TUN, Docker, nested-виртуализация.
-
-Каждая проверка получает статус OK / WARN / FAIL, в конце выводится сводка и вердикт. Недостающие утилиты скрипт ставит сам, файлы на диске не оставляет.
+**Как работает.** 12 проверок в 4 этапа: железо (steal time, OOM, `fio`), сеть (скорость, `mtr`, MTU, IPv6), репутация IP (DNSBL, rDNS, порт 25), пригодность (TUN, Docker, nested). Статусы OK/WARN/FAIL, мусорных файлов не оставляет.
 
 ---
 
 ## 🔐 firststep.sh
 
-**Что делает.** Первый шаг после выдачи VPS: ставит ваш SSH-ключ и закрывает вход по паролю.
+**Что делает.** Первый шаг после выдачи VPS: ставит SSH-ключ и закрывает вход по паролю.
 
 **Быстрый запуск.**
 
@@ -75,13 +65,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/firststep.sh)"
 ```
 
-**Как работает.**
-
-1. Спрашивает пользователя и публичный ключ, проверяет ключ через `ssh-keygen`.
-2. Добавляет ключ в `~/.ssh/authorized_keys` (без дублей, с правильными правами).
-3. После подтверждения отключает `PasswordAuthentication` и `KbdInteractiveAuthentication`.
-4. Проверяет конфиг (`sshd -t`), при ошибке откатывает изменения, делает бэкап в `/root/`.
-5. Перезагружает sshd без обрыва текущей сессии.
+**Как работает.** Проверяет ключ, добавляет в `authorized_keys`, после подтверждения отключает пароли, проверяет `sshd -t`, при ошибке откатывает, перезагружает sshd без обрыва сессии.
 
 > 💡 Не закрывай текущую сессию, пока не проверишь вход по ключу из нового терминала.
 
@@ -89,7 +73,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/
 
 ## 🌉 mtproxy-setup.sh
 
-**Что делает.** Поднимает приватный Telegram MTProxy, который выходит в Telegram через зашифрованный туннель на зарубежном сервере. Подходит, когда прямой MTProxy блокируется или тормозит.
+**Что делает.** Приватный MTProxy через зашифрованный туннель на зарубежном сервере.
 
 ```
 Клиент → 🇷🇺 RU-сервер (telemt) → 🌉 Мост (Xray, VLESS+Reality) → Telegram
@@ -101,16 +85,38 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/
 bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-setup.sh)
 ```
 
-После первого запуска скрипт ставится как команда `amtcas`: дальше достаточно набрать `amtcas`.
+**Как работает.** Два VPS: RU-сервер и мост. Скрипт сам определяет роль, ставит Docker, генерирует ключи, выдаёт данные и готовую ссылку `tg://proxy?...`. Транспорт: TCP, gRPC или xHTTP. После первого запуска доступен как команда `amtcas`; есть автообновление и удаление.
 
-**Как работает.**
+---
 
-1. Нужны два VPS: **RU-сервер** и **мост** за рубежом (Ubuntu 22.04 / Debian 12, открытый `443/tcp`).
-2. Запусти скрипт на **мосту**: он сам поставит Docker, сгенерирует ключи и выдаст данные для RU-сервера.
-3. Запусти скрипт на **RU-сервере**, вставь эти данные (транспорт должен совпадать с мостом).
-4. Получи готовую ссылку `tg://proxy?...` и открой её в Telegram.
+## 🛡 remnawave-audit.sh
 
-Роль сервера скрипт определяет сам. Транспорт на выбор: TCP, gRPC или xHTTP. Есть автообновление и полное удаление через меню.
+**Что делает.** Интерактивный аудит ноды и панели Remnawave: проверка, отчёт и безопасные исправления (только после подтверждения). Закрывает пять признаков, по которым ТСПУ находит VPN-ноды, и CVE-2026-98432 (MPTCP).
+
+**Быстрый запуск.**
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/remnawave-audit.sh)"
+```
+
+**Меню.**
+
+```
+1) Проверить ноду (read-only)
+2) Проверить и исправить ноду
+3) Проверить панель (через API)
+0) Выход
+```
+
+**Что проверяет нода.** ОС, ядро, диск; MPTCP; firewall и порт ноды (не открыт ли всем); selfsteal — 301 с 80, заглушка на `127.0.0.1:9443`, HSTS, TLS 1.2/1.3; SSH (root, пароли); Docker (restart policy).
+
+**Что проверяет панель.** Ноды online/offline и версии Xray (< 26.10.31 — CVE); профили: Trojan, VLESS без Vision, `reality target`/`serverNames`; пользователи. Конфиг Xray на ноде не хранится — панель высылает его при запуске, поэтому проверки читаются через API.
+
+**Что исправляет.** MPTCP off (с сохранением в `sysctl.d`); ufw: 22/80/443 открыты, порт ноды — только с IP панели, default deny. 301/HSTS (Caddyfile), ядро и SSH — только инструкцией или после явного «y».
+
+**Отчёт.** `reports/<host>-<режим>-<дата>.md`, итог OK/WARN/FAIL.
+
+**Требования.** Нода: Ubuntu 22.04+/Debian 12+, root. Панель: `python3` и API-токен (Settings → API).
 
 ---
 
@@ -118,4 +124,4 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Tox4ch/amtcas/main/mtproxy-s
 
 MIT: используй свободно, модифицируй, распространяй.
 
-Построено на базе [telemt](https://github.com/telemt/telemt) и [Xray-core](https://github.com/XTLS/Xray-core).
+Построено на базе [Xray-core](https://github.com/XTLS/Xray-core) и [telemt](https://github.com/telemt/telemt).
